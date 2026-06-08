@@ -41,9 +41,13 @@ public class WhisperTranscriber
             {
                 processorBuilder.WithLanguage(languageCode);
             }
+            else
+            {
+                processorBuilder.WithLanguageDetection(); // Включаем автоопределение языка
+            }
 
             using var processor = processorBuilder
-                .WithTranslate()
+                .WithPrintProgress()
                 .Build();
 
             using var fileStream = File.OpenRead(tempWav);
