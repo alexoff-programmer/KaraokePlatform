@@ -1,0 +1,41 @@
+﻿@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Вход в систему";
+}
+
+<div class="row justify-content-center align-items-center" style="min-height: 70vh;">
+    <div class="col-md-4">
+        <div class="card shadow-sm border-0 rounded-3">
+            <div class="card-body p-4">
+                <h2 class="text-center mb-4 font-weight-bold text-primary">Karaoke Platform</h2>
+                <p class="text-muted text-center small mb-4">Пожалуйста, авторизуйтесь для генерации видео</p>
+
+                @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+                {
+                    <div class="alert alert-danger role=" alert" small">
+                        @Model.ErrorMessage
+                    </div>
+                }
+
+                <form method="post">
+                    <div class="mb-3">
+                        <label asp-for="Username" class="form-label text-secondary small">Имя пользователя</label>
+                        <input asp-for="Username" class="form-board form-control form-control-lg"
+                               autocomplete="username" required />
+                        <span asp-validation-for="Username" class="text-danger small"></span>
+                    </div>
+
+                    <div class="mb-4">
+                        <label asp-for="Password" class="form-label text-secondary small">Пароль</label>
+                        <input asp-for="Password" type="password" class="form-board form-control form-control-lg"
+                               autocomplete="current-password" required />
+                        <span asp-validation-for="Password" class="text-danger small"></span>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary btn-lg w-100 shadow-sm rounded-3">Войти</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>

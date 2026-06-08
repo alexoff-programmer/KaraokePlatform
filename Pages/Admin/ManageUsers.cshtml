@@ -1,0 +1,112 @@
+@page
+@using KaraokePlatform.Data.Entities
+@model KaraokePlatform.Pages.Admin.ManageUsersModel
+@{
+    ViewData["Title"] = "Управление пользователями";
+}
+
+<div class="container py-4">
+    <div class="row mb-4 align-items-center">
+        <div class="col">
+            <h1 class="h3 text-danger"><i class="bi bi-shield-lock"></i> Панель администратора</h1>
+            <p class="text-muted small mb-0">Создание учетных записей и аудит активности пользователей</p>
+        </div>
+        <div class="col-auto">
+            <a class="btn btn-outline-secondary btn-sm" asp-page="/Dashboard">Вернуться в Dashboard</a>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+    {
+        <div class="alert alert-danger" role="alert">@Model.ErrorMessage</div>
+    }
+    @if (!string.IsNullOrEmpty(Model.SuccessMessage))
+    {
+        <div class="alert alert-success" role="alert">@Model.SuccessMessage</div>
+    }
+
+    <div class="row g-4">
+        <div class="col-lg-4">
+            <div class="card shadow-sm border-0 rounded-3">
+                <div class="card-body p-4">
+                    <h5 class="card-title mb-3 font-weight-bold">Новый аккаунт</h5>
+
+                    <form method="post" asp-page-handler="Create">
+                        <div class="mb-3">
+                            <label asp-for="NewUsername" class="form-label text-secondary small">Имя
+                                пользователя</label>
+                                <input asp-for="NewUsername" class="form-control" required autocomplete="off" />
+                            </div>
+
+                            <div class="mb-3">
+                                <label asp-for="NewPassword" class="form-label text-secondary small">Пароль</label>
+                                <input asp-for="NewPassword" type="text" class="form-control" required autocomplete="off"
+                                       placeholder="Вводите надежный пароль" />
+                            </div>
+
+                            <div class="mb-4">
+                                <label asp-for="NewRole" class="form-label text-secondary small">Роль в системе</label>
+                                <select asp-for="NewRole" class="form-select"
+                                        asp-items="Html.GetEnumSelectList<Role>()"></select>
+                            </div>
+
+                            <button type="submit" class="btn btn-danger w-100 shadow-sm rounded-3">Создать
+                                пользователя</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-lg-8">
+                    <div class="card shadow-sm border-0 rounded-3">
+                        <div class="card-body p-4">
+                            <h5 class="card-title mb-3 font-weight-bold">Список пользователей</h5>
+
+                            <div class="table-responsive">
+                                <table class="table table-hover align-middle">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th style="font-size: 0.85rem;" class="text-secondary">Логин</th>
+                                            <th style="font-size: 0.85rem;" class="text-secondary">Роль</th>
+                                            <th style="font-size: 0.85rem;" class="text-secondary">Дата регистрации</th>
+                                            <th style="font-size: 0.85rem;" class="text-secondary text-center">Всего видео</th>
+                                            <th style="font-size: 0.85rem;" class="text-secondary text-end">Действия</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var user in Model.ExistingUsers)
+                                        {
+                                            <tr>
+                                                <td class="font-weight-bold">@user.Username</td>
+                                                <td>
+                                                    @if (user.Role == Role.Admin)
+                                                    {
+                                                        <span class="badge bg-danger text-white rounded-pill px-2 py-1">Admin</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="badge bg-info text-dark rounded-pill px-2 py-1">User</span>
+                                                    }
+                                                </td>
+                                                <td class="small text-muted">@user.CreatedAt.ToLocalTime().ToString("d")</td>
+                                                <td class="text-center font-weight-bold text-secondary">@user.Tasks.Count</td>
+                                                <td class="text-end">
+                                                    <form method="post" asp-page-handler="Delete" asp-route-id="@user.Id"
+                                                          onsubmit="return confirm('Вы уверены, что хотите удалить пользователя @user.Username и все его сгенерированные видео?');"
+                                                          style="display:inline;">
+                                                        <button type="submit"
+                                                                class="btn btn-sm btn-outline-danger border-0 rounded-3">
+                                                            Удалить
+                                                        </button>
+                                                    </form>
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>

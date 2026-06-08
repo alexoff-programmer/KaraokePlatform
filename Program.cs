@@ -1,0 +1,73 @@
+using KaraokePlatform.Data;
+using KaraokePlatform.Services;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.EntityFrameworkCore;
+
+var builder = WebApplication.CreateBuilder(args);
+
+var instancePath = Path.Combine(builder.Environment.ContentRootPath, "instance");
+if (!Directory.Exists(instancePath))
+{
+    Directory.CreateDirectory(instancePath);
+}
+
+// 1. Регистрация базы данных SQLite
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+// 2. Настройка аутентификации через Cookies
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddCookie(options =>
+    {
+        options.LoginPath = "/Index"; // Куда перенаправлять, если пользователь не авторизован
+        options.AccessDeniedPath = "/Index"; // Куда перенаправлять, если не хватает прав (например, не админ)
+        options.ExpireTimeSpan = TimeSpan.FromDays(7); // Время жизни куки
+    });
+// 3. Регистрация нашего бизнес-сервиса
+builder.Services.AddScoped<UserService>();
+
+builder.Services.AddRazorPages(options =>
+{
+    // По желанию можно глобально закрыть весь сайт, кроме главной страницы входа:
+    options.Conventions.AuthorizeFolder("/Admin");
+    options.Conventions.AuthorizePage("/Dashboard");
+});
+
+var app = builder.Build();
+
+// Configure the HTTP request pipeline.
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler("/Error");
+    // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
+    app.UseHsts();
+}
+
+app.UseHttpsRedirection();
+app.UseStaticFiles();
+
+app.UseRouting();
+
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapStaticAssets();
+app.MapRazorPages()
+   .WithStaticAssets();
+
+using (var scope = app.Services.CreateScope())
+{
+    var services = scope.ServiceProvider;
+    var context = services.GetRequiredService<AppDbContext>();
+
+    context.Database.EnsureCreated();
+    // Проверяем, есть ли вообще пользователи в базе
+    if (!context.Users.Any())
+    {
+        var userService = services.GetRequiredService<UserService>();
+        // Создаем дефолтного админа. Обязательно смени пароль при деплое!
+        await userService.CreateUserAsync("admin", "admin123", KaraokePlatform.Data.Entities.Role.Admin);
+    }
+}
+
+app.Run();
