@@ -11,6 +11,13 @@
                 <h2 class="text-center mb-4 font-weight-bold text-primary">Karaoke Platform</h2>
                 <p class="text-muted text-center small mb-4">Пожалуйста, авторизуйтесь для генерации видео</p>
 
+                @if (!string.IsNullOrEmpty(Model.SuccessMessage))
+                {
+                    <div class="alert alert-success small" role="alert">
+                        @Model.SuccessMessage
+                    </div>
+                }
+
                 @if (!string.IsNullOrEmpty(Model.ErrorMessage))
                 {
                     <div class="alert alert-danger role=" alert" small">

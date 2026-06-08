@@ -1,5 +1,7 @@
 using KaraokePlatform.Data;
 using KaraokePlatform.Services;
+using KaraokePlatform.Services.Background;
+using KaraokePlatform.Services.Audio;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.EntityFrameworkCore;
 
@@ -11,11 +13,11 @@ if (!Directory.Exists(instancePath))
     Directory.CreateDirectory(instancePath);
 }
 
-// 1. Регистрация базы данных SQLite
+// Регистрация базы данных SQLite
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// 2. Настройка аутентификации через Cookies
+// Настройка аутентификации через Cookies
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {
@@ -23,8 +25,15 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         options.AccessDeniedPath = "/Index"; // Куда перенаправлять, если не хватает прав (например, не админ)
         options.ExpireTimeSpan = TimeSpan.FromDays(7); // Время жизни куки
     });
-// 3. Регистрация нашего бизнес-сервиса
+// Регистрация бизнес-сервиса
 builder.Services.AddScoped<UserService>();
+
+// РЕГИСТРАЦИЯ СЕРВИСОВ ДЛЯ ОБРАБОТКИ АУДИО
+builder.Services.AddScoped<WhisperTranscriber>();
+
+// РЕГИСТРАЦИЯ КОНВЕЙЕРА ОБРАБОТКИ
+builder.Services.AddSingleton<QueueChannel>(); // Очередь должна быть одна на всё приложение (Singleton)
+builder.Services.AddHostedService<VideoProcessingWorker>(); // Запуск фонового процесса
 
 builder.Services.AddRazorPages(options =>
 {
@@ -35,11 +44,10 @@ builder.Services.AddRazorPages(options =>
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
+// Конфигурация HTTP-конвейера
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Error");
-    // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
     app.UseHsts();
 }
 

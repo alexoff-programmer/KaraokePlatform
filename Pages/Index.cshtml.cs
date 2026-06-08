@@ -24,6 +24,8 @@ public class IndexModel : PageModel
 
     public string ErrorMessage { get; set; } = string.Empty;
 
+    public string SuccessMessage { get; set; } = string.Empty;
+
     public IActionResult OnGet()
     {
         // Если пользователь уже залогинен, не показываем форму, а сразу кидаем в Dashboard
@@ -31,6 +33,8 @@ public class IndexModel : PageModel
         {
             return RedirectToPage("/Dashboard");
         }
+
+        SuccessMessage = TempData["SuccessMessage"] as string ?? string.Empty;
 
         return Page();
     }

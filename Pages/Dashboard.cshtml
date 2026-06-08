@@ -35,92 +35,115 @@
                     <p class="text-muted small">Загрузите аудиофайл трека в формате MP3. Система автоматически
                         распознает текст, создаст субтитры и сгенерирует вертикальное видео.</p>
 
-                        <form method="post" asp-page-handler="Upload" enctype="multipart/form-data">
-                            <div class="mb-3">
-                                <label asp-for="UploadedAudio" class="form-label text-secondary small">Выберите .MP3
-                                    файл</label>
-                                    <input asp-for="UploadedAudio" class="form-control" type="file" accept=".mp3" required />
-                                </div>
-                                <button type="submit" class="btn btn-primary w-100 shadow-sm rounded-3">Отправить в
-                                    очередь</button>
-                                </form>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="col-lg-8">
                         <div class="card shadow-sm border-0 rounded-3">
                             <div class="card-body p-4">
-                                <h5 class="card-title mb-3 font-weight-bold">Мои генерации</h5>
+                                <h5 class="card-title mb-3 font-weight-bold">Создать караоке</h5>
+                                <p class="text-muted small">Загрузите аудиофайл трека в формате MP3. Система автоматически
+                                    распознает текст, создаст субтитры и сгенерирует вертикальное видео.</p>
 
-                                @if (!Model.UserTasks.Any())
-                                {
-                                    <div class="text-center py-4 text-muted">
-                                        <p class="mb-0">Вы еще не загрузили ни одного трека.</p>
-                                    </div>
-                                }
-                                else
-                                {
-                                    <div class="table-responsive">
-                                        <table class="table table-hover align-middle">
-                                            <thead class="table-light">
-                                                <tr>
-                                                    <th style="font-size: 0.85rem;" class="text-secondary">Файл</th>
-                                                    <th style="font-size: 0.85rem;" class="text-secondary">Дата</th>
-                                                    <th style="font-size: 0.85rem;" class="text-secondary">Статус</th>
-                                                    <th style="font-size: 0.85rem;" class="text-secondary">Результат</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                @foreach (var task in Model.UserTasks)
-                                                {
-                                                    <tr>
-                                                        <td class="font-weight-bold">@task.OriginalFileName</td>
-                                                        <td class="small text-muted">@task.CreatedAt.ToLocalTime().ToString("g")</td>
-                                                        <td>
-                                                            @if (task.Status == KaraokeTaskStatus.InQueue)
-                                                            {
-                                                                <span class="badge bg-secondary text-white rounded-pill px-2 py-1">В
-                                                                    очереди</span>
-                                                                }
-                                                else if (task.Status == KaraokeTaskStatus.Processing)
-                                                                {
-                                                                    <span class="badge bg-warning text-dark rounded-pill px-2 py-1">
-                                                                        <span class="spinner-border spinner-border-sm me-1" role="status"
-                                                                              aria-hidden="true"></span>Обработка
-                                                                    </span>
-                                                                }
-                                                                else if (task.Status == KaraokeTaskStatus.Completed)
-                                                                {
-                                                                    <span class="badge bg-success text-white rounded-pill px-2 py-1">Готово</span>
-                                                                }
-                                                                else if (task.Status == KaraokeTaskStatus.Failed)
-                                                                {
-                                                                    <span class="badge bg-danger text-white rounded-pill px-2 py-1"
-                                                                          title="@task.ErrorMessage">Ошибка</span>
-                                                                }
-                                                            </td>
-                                                            <td>
-                                                                @if (task.Status == KaraokeTaskStatus.Completed &&
-                                                        !string.IsNullOrEmpty(task.VideoFilePath))
-                                                                {
-                                                                    <a href="/@task.VideoFilePath" class="btn btn-sm btn-outline-success rounded-3"
-                                                                       download>Скачать MP4</a>
-                                                                }
-                                                                else
-                                                                {
-                                                                    <button class="btn btn-sm btn-light rounded-3 text-muted"
-                                                                            disabled>Ожидание</button>
-                                                                }
-                                                            </td>
-                                                        </tr>
-                                                    }
-                                                </tbody>
-                                            </table>
+                                    <form method="post" asp-page-handler="Upload" enctype="multipart/form-data">
+                                        <div class="mb-3">
+                                            <label asp-for="UploadedAudio" class="form-label text-secondary small">Выберите .MP3
+                                                файл</label>
+                                                <input asp-for="UploadedAudio" class="form-control" type="file" accept=".mp3"
+                                                       required />
+                                            </div>
+
+                                            <div class="mb-4">
+                                                <label asp-for="SelectedLanguage" class="form-label text-secondary small">Язык
+                                                    исполнения</label>
+                                                    <select asp-for="SelectedLanguage" class="form-select">
+                                                        <option value="auto">🌍 Определить автоматически (Auto)</option>
+                                                        <option value="ru">🇷🇺 Русский</option>
+                                                        <option value="en">🇺🇸 Английский</option>
+                                                        <option value="es">🇪🇸 Испанский</option>
+                                                        <option value="de">🇩🇪 Немецкий</option>
+                                                    </select>
+                                                </div>
+
+                                                <button type="submit" class="btn btn-primary w-100 shadow-sm rounded-3">Отправить в
+                                                    очередь</button>
+                                                </form>
+                                            </div>
                                         </div>
-                                    }
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                                    </div>
+
+                                    <div class="col-lg-8">
+                                        <div class="card shadow-sm border-0 rounded-3">
+                                            <div class="card-body p-4">
+                                                <h5 class="card-title mb-3 font-weight-bold">Мои генерации</h5>
+
+                                                @if (!Model.UserTasks.Any())
+                                                {
+                                                    <div class="text-center py-4 text-muted">
+                                                        <p class="mb-0">Вы еще не загрузили ни одного трека.</p>
+                                                    </div>
+                                                }
+                                                else
+                                                {
+                                                    <div class="table-responsive">
+                                                        <table class="table table-hover align-middle">
+                                                            <thead class="table-light">
+                                                                <tr>
+                                                                    <th style="font-size: 0.85rem;" class="text-secondary">Файл</th>
+                                                                    <th style="font-size: 0.85rem;" class="text-secondary">Дата</th>
+                                                                    <th style="font-size: 0.85rem;" class="text-secondary">Статус</th>
+                                                                    <th style="font-size: 0.85rem;" class="text-secondary">Результат</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                @foreach (var task in Model.UserTasks)
+                                                                {
+                                                                    <tr>
+                                                                        <td class="font-weight-bold">@task.OriginalFileName</td>
+                                                                        <td class="small text-muted">@task.CreatedAt.ToLocalTime().ToString("g")
+                                                                        </td>
+                                                                        <td>
+                                                                            @if (task.Status == KaraokeTaskStatus.InQueue)
+                                                                            {
+                                                                                <span class="badge bg-secondary text-white rounded-pill px-2 py-1">В
+                                                                                    очереди</span>
+                                                                                }
+                                                else if (task.Status == KaraokeTaskStatus.Processing)
+                                                                                {
+                                                                                    <span class="badge bg-warning text-dark rounded-pill px-2 py-1">
+                                                                                        <span class="spinner-border spinner-border-sm me-1" role="status"
+                                                                                              aria-hidden="true"></span>Обработка
+                                                                                    </span>
+                                                                                }
+                                                                                else if (task.Status == KaraokeTaskStatus.Completed)
+                                                                                {
+                                                                                    <span
+                                                                                    class="badge bg-success text-white rounded-pill px-2 py-1">Готово</span>
+                                                                                }
+                                                                                else if (task.Status == KaraokeTaskStatus.Failed)
+                                                                                {
+                                                                                    <span class="badge bg-danger text-white rounded-pill px-2 py-1"
+                                                                                          title="@task.ErrorMessage">Ошибка</span>
+                                                                                }
+                                                                            </td>
+                                                                            <td>
+                                                                                @if (task.Status == KaraokeTaskStatus.Completed &&
+                                                                        !string.IsNullOrEmpty(task.VideoFilePath))
+                                                                                {
+                                                                                    <a href="/@task.VideoFilePath"
+                                                                                       class="btn btn-sm btn-outline-success rounded-3" download>Скачать
+                                                                                        MP4</a>
+                                                                                    }
+                                                                else
+                                                                                    {
+                                                                                        <button class="btn btn-sm btn-light rounded-3 text-muted"
+                                                                                                disabled>Ожидание</button>
+                                                                                    }
+                                                                                </td>
+                                                                            </tr>
+                                                                        }
+                                                                    </tbody>
+                                                                </table>
+                                                            </div>
+                                                        }
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
