@@ -1,5 +1,8 @@
 using KaraokePlatform.Data;
+using KaraokePlatform.Hubs;
 using KaraokePlatform.Services.Audio;
+using KaraokePlatform.Services.Video;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using TaskStatus = KaraokePlatform.Data.Entities.KaraokeTaskStatus;
 
@@ -10,15 +13,18 @@ public class VideoProcessingWorker : BackgroundService
     private readonly QueueChannel _queueChannel;
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<VideoProcessingWorker> _logger;
+    private readonly IHubContext<NotificationHub> _hubContext;
 
     public VideoProcessingWorker(
         QueueChannel queueChannel,
         IServiceProvider serviceProvider,
-        ILogger<VideoProcessingWorker> logger)
+        ILogger<VideoProcessingWorker> logger,
+        IHubContext<NotificationHub> hubContext)
     {
         _queueChannel = queueChannel;
         _serviceProvider = serviceProvider;
         _logger = logger;
+        _hubContext = hubContext;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -34,9 +40,12 @@ public class VideoProcessingWorker : BackgroundService
             using var scope = _serviceProvider.CreateScope();
             var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var transcriber = scope.ServiceProvider.GetRequiredService<WhisperTranscriber>();
+            var renderer = scope.ServiceProvider.GetRequiredService<VideoRenderer>();
 
             var task = await context.KaraokeTasks.FindAsync(new object[] { taskId }, stoppingToken);
             if (task == null) continue;
+            var user = await context.Users.FindAsync(task.UserId);
+            string username = user?.Username ?? string.Empty;
 
             try
             {
@@ -46,6 +55,13 @@ public class VideoProcessingWorker : BackgroundService
                 await context.SaveChangesAsync(stoppingToken);
 
                 _logger.LogInformation($"Началась обработка файла: {task.OriginalFileName}");
+
+                // ОТПРАВКА: Оповещаем фронтенд, что видео начало обрабатываться
+                if (!string.IsNullOrEmpty(username))
+                {
+                    await _hubContext.Clients.User(username)
+                        .SendAsync("UpdateTaskStatus", task.Id.ToString(), "Processing", stoppingToken);
+                }
 
                 // Полный физический путь к загруженному аудио
                 var fullAudioPath = Path.Combine(scope.ServiceProvider.GetRequiredService<IWebHostEnvironment>().WebRootPath, task.AudioFilePath);
@@ -60,13 +76,25 @@ public class VideoProcessingWorker : BackgroundService
 
                 _logger.LogInformation($"Субтитры успешно созданы: {assSubtitlesPath}");
 
-                // Временно оставляем имитацию видео, используя сгенерированные субтитры
-                await Task.Delay(2000, stoppingToken);
+                // Имя для готового видеоролика
+                var videoFileName = $"{Guid.NewGuid()}.mp4";
+                var fullVideoOutputPath = Path.Combine(outputFolder, videoFileName);
 
-                // Имитируем успешное завершение и прописываем путь к будущему видео
+                // ЗАПУСКАЕМ СБОРКУ ВИДЕО
+                await renderer.RenderKaraokeVideoAsync(fullAudioPath, assSubtitlesPath, fullVideoOutputPath);
+
+                // Записываем в базу относительный путь к готовому файлу для скачивания с фронтенда
                 task.Status = TaskStatus.Completed;
-                task.VideoFilePath = task.AudioFilePath.Replace(".mp3", ".mp4"); // Временно для теста
+                task.VideoFilePath = Path.Combine("output", videoFileName); // Относительный путь для браузера
                 task.UpdatedAt = DateTime.UtcNow;
+                await context.SaveChangesAsync(stoppingToken);
+
+                // ОТПРАВКА: Оповещаем фронтенд, что всё готово, и передаем ссылку на скачивание
+                if (!string.IsNullOrEmpty(username))
+                {
+                    await _hubContext.Clients.User(username)
+                        .SendAsync("UpdateTaskStatus", task.Id.ToString(), "Completed", task.VideoFilePath, stoppingToken);
+                }
 
                 _logger.LogInformation($"Успешно обработано: {task.OriginalFileName}");
             }
@@ -76,6 +104,14 @@ public class VideoProcessingWorker : BackgroundService
                 task.Status = TaskStatus.Failed;
                 task.ErrorMessage = ex.Message;
                 task.UpdatedAt = DateTime.UtcNow;
+                await context.SaveChangesAsync(stoppingToken);
+
+                // ОТПРАВКА: Оповещаем об ошибке
+                if (!string.IsNullOrEmpty(username))
+                {
+                    await _hubContext.Clients.User(username)
+                        .SendAsync("UpdateTaskStatus", task.Id.ToString(), "Failed", stoppingToken);
+                }
             }
 
             await context.SaveChangesAsync(stoppingToken);

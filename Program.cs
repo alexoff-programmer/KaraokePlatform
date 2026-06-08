@@ -4,6 +4,8 @@ using KaraokePlatform.Services.Background;
 using KaraokePlatform.Services.Audio;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.EntityFrameworkCore;
+using KaraokePlatform.Services.Video;
+using KaraokePlatform.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -31,6 +33,9 @@ builder.Services.AddScoped<UserService>();
 // РЕГИСТРАЦИЯ СЕРВИСОВ ДЛЯ ОБРАБОТКИ АУДИО
 builder.Services.AddScoped<WhisperTranscriber>();
 
+// РЕГИСТРАЦИЯ СЕРВИСОВ ДЛЯ ОБРАБОТКИ ВИДЕО
+builder.Services.AddScoped<VideoRenderer>();
+
 // РЕГИСТРАЦИЯ КОНВЕЙЕРА ОБРАБОТКИ
 builder.Services.AddSingleton<QueueChannel>(); // Очередь должна быть одна на всё приложение (Singleton)
 builder.Services.AddHostedService<VideoProcessingWorker>(); // Запуск фонового процесса
@@ -41,6 +46,8 @@ builder.Services.AddRazorPages(options =>
     options.Conventions.AuthorizeFolder("/Admin");
     options.Conventions.AuthorizePage("/Dashboard");
 });
+
+builder.Services.AddSignalR();
 
 var app = builder.Build();
 
@@ -62,6 +69,8 @@ app.UseAuthorization();
 app.MapStaticAssets();
 app.MapRazorPages()
    .WithStaticAssets();
+
+app.MapHub<NotificationHub>("/notificationHub");
 
 using (var scope = app.Services.CreateScope())
 {
