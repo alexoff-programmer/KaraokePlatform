@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.EntityFrameworkCore;
 using KaraokePlatform.Services.Video;
 using KaraokePlatform.Hubs;
+using KaraokePlatform.Settings;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -31,6 +32,7 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
 builder.Services.AddScoped<UserService>();
 
 // РЕГИСТРАЦИЯ СЕРВИСОВ ДЛЯ ОБРАБОТКИ АУДИО
+builder.Services.Configure<WhisperSettings>(builder.Configuration.GetSection("WhisperSettings"));
 builder.Services.AddScoped<WhisperTranscriber>();
 
 // РЕГИСТРАЦИЯ СЕРВИСОВ ДЛЯ ОБРАБОТКИ ВИДЕО

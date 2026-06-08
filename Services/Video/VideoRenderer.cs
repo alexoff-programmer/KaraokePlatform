@@ -23,14 +23,51 @@ public class VideoRenderer
         // Для фильтра subtitles в FFmpeg путь должен быть с прямыми слэшами и экранированными двоеточиями
         string escapedAssPath = assSubtitlesPath.Replace("\\", "/").Replace(":", "\\:");
 
-        // Команда FFmpeg:
-        // 1. -f lavfi -i color=... -> Генерируем сплошной темный фон (цвета #1a1a2e) в вертикальном формате 1080x1920
-        // 2. -i "{audioPath}" -> Подкладываем оригинальный звук песни
-        // 3. -vf "subtitles=..." -> Накладываем (впекаем) наши караоке-субтитры поверх видео
-        // 4. -shortest -> Завершаем видео сразу, как только закончится аудиофайл
-        string arguments = $"-f lavfi -i color=c=0x1a1a2e:s=1080x1920:r=30 -i \"{audioPath}\" " +
-                           $"-vf \"subtitles='{escapedAssPath}'\" " +
-                           $"-c:v libx264 -preset ultrafast -crf 23 -c:a aac -shortest -y \"{outputVideoPath}\"";
+        // КОМАНДА ДЛЯ ЭФФЕКТА APPLE MUSIC:
+        // 1. Генерируем динамический поток testsrc2
+        // 2. Размываем его (boxblur), превращая движение в жидкий градиент
+        // 3. Накладываем виньетку (vignette), чтобы слегка притемнить края экрана для фокуса на тексте
+        // 4. Впекаем отцентрированные субтитры поверх готового фона
+        // Генерируем случайный сдвиг по цветовому кругу от 0 до 360 градусов при каждом запуске
+        // 1. Узнаем точную длительность аудио с помощью NAudio, чтобы ограничить генератор фона
+        double audioDurationSeconds;
+        using (var reader = new NAudio.Wave.AudioFileReader(audioPath))
+        {
+            audioDurationSeconds = reader.TotalTime.TotalSeconds;
+        }
+
+        string durationStr = audioDurationSeconds.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
+
+        // Генерируем случайный базовый тон от 0 до 360 градусов (Hue по цветовому колесу)
+        int randomHue = Random.Shared.Next(0, 360);
+
+        // Рандомим небольшое смещение скорости перелива для уникальности каждого трека
+        double speedModifier = Random.Shared.NextDouble() * 0.4 + 0.2; // от 0.2 до 0.6
+        string speedStr = speedModifier.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
+
+        // Формируем фильтр-комплекс
+        // 1. geq генерирует плавные ч/б волны, используя только канал яркости (lum). Никаких двоеточий!
+        // 2. colorize окрашивает эти волны в один тон (hue), выставляя отличную насыщенность (saturation=0.7)
+        //    и среднюю яркость (lightness=0.5), чтобы не было черных или засвеченных мест.
+        string arguments = $"-f lavfi -t {durationStr} -i \"color=c=black:s=540x960:r=30\" " +
+                           $"-i \"{audioPath}\" " +
+                           $"-filter_complex \"" +
+                           $"[0:v]geq=lum='128+110*sin(X/W+T*{speedStr})*cos(Y/H+T*{speedStr})'[bw_grid];" +
+                           $"[bw_grid]colorize=hue={randomHue}:saturation=0.7:lightness=0.5[raw_grad];" +
+
+                           // Апскейлим до 1080x1920
+                           $"[raw_grad]scale=1080:1920:flags=bicubic," +
+
+                           // Мощное размытие для превращения волн в жидкий шелк
+                           $"boxblur=luma_radius=150:luma_power=4:chroma_radius=150:chroma_power=4," +
+
+                           // Накатываем субтитры
+                           $"subtitles='{escapedAssPath}'[outv]\" " +
+
+                           $"-map \"[outv]\" -map 1:a " +
+
+                           // Параметры совместимости для открытия на любых старых плеерах Windows/смартфонах
+                           $"-c:v libx264 -preset ultrafast -profile:v high -level:v 4.1 -pix_fmt yuv420p -crf 23 -c:a aac -y \"{outputVideoPath}\"";
 
         var startInfo = new ProcessStartInfo
         {

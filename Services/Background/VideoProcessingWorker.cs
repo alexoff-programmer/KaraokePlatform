@@ -56,11 +56,11 @@ public class VideoProcessingWorker : BackgroundService
 
                 _logger.LogInformation($"Началась обработка файла: {task.OriginalFileName}");
 
-                // ОТПРАВКА: Оповещаем фронтенд, что видео начало обрабатываться
+                // ОТПРАВКА: Инициализируем начало обработки (сбрасываем на стартовые 10%)
                 if (!string.IsNullOrEmpty(username))
                 {
-                    await _hubContext.Clients.User(username)
-                        .SendAsync("UpdateTaskStatus", task.Id.ToString(), "Processing", stoppingToken);
+                    await _hubContext.Clients.Group(username)
+                        .SendAsync("UpdateTaskStatus", task.Id.ToString(), "Processing: 10% (Инициализация...)", null, stoppingToken);
                 }
 
                 // Полный физический путь к загруженному аудио
@@ -72,9 +72,29 @@ public class VideoProcessingWorker : BackgroundService
                 _logger.LogInformation("Запуск нейросети Whisper для распознавания текста...");
 
                 // Генерируем субтитры .ASS через Whisper
-                string assSubtitlesPath = await transcriber.TranscribeToAssAsync(fullAudioPath, outputFolder, task.Language);
+                string assSubtitlesPath = await transcriber.ProcessAudioAsync(
+                    fullAudioPath, outputFolder, task.Language, async (progress) =>
+                    {
+                        if (!string.IsNullOrEmpty(username))
+                        {
+                            // ВАЖНО: Строка должна СТРОГО начинаться с "Processing: "
+                            string statusText = $"Processing: {progress}% (Распознавание текста...)";
+
+                            // ИСПОЛЬЗУЕМ .Group(username) для консистентности со всем файлом
+                            await _hubContext.Clients.Group(username)
+                                .SendAsync("UpdateTaskStatus", task.Id.ToString(), statusText, null, stoppingToken);
+                        }
+                    });
 
                 _logger.LogInformation($"Субтитры успешно созданы: {assSubtitlesPath}");
+
+                // Переход к этапу рендеринга видео (60%)
+                if (!string.IsNullOrEmpty(username))
+                {
+                    // ИСПРАВЛЕНО: Добавлено ключевое слово "Processing: ", чтобы фронтенд понял статус
+                    await _hubContext.Clients.Group(username)
+                        .SendAsync("UpdateTaskStatus", task.Id.ToString(), "Processing: 60% (Сборка видео...)", null, stoppingToken);
+                }
 
                 // Имя для готового видеоролика
                 var videoFileName = $"{Guid.NewGuid()}.mp4";
@@ -92,8 +112,8 @@ public class VideoProcessingWorker : BackgroundService
                 // ОТПРАВКА: Оповещаем фронтенд, что всё готово, и передаем ссылку на скачивание
                 if (!string.IsNullOrEmpty(username))
                 {
-                    await _hubContext.Clients.User(username)
-                        .SendAsync("UpdateTaskStatus", task.Id.ToString(), "Completed", task.VideoFilePath, stoppingToken);
+                    await _hubContext.Clients.Group(username)
+                        .SendAsync("UpdateTaskStatus", task.Id.ToString(), "Completed", task.VideoFilePath.Replace("\\", "/"), stoppingToken);
                 }
 
                 _logger.LogInformation($"Успешно обработано: {task.OriginalFileName}");
@@ -109,8 +129,8 @@ public class VideoProcessingWorker : BackgroundService
                 // ОТПРАВКА: Оповещаем об ошибке
                 if (!string.IsNullOrEmpty(username))
                 {
-                    await _hubContext.Clients.User(username)
-                        .SendAsync("UpdateTaskStatus", task.Id.ToString(), "Failed", stoppingToken);
+                    await _hubContext.Clients.Group(username)
+                        .SendAsync("UpdateTaskStatus", task.Id.ToString(), "Failed", null, stoppingToken);
                 }
             }
 
