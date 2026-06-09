@@ -6,11 +6,13 @@ public class VideoRenderer
 {
     private readonly ILogger<VideoRenderer> _logger;
     private readonly string _ffmpegPath;
+    private readonly string _fontsFolder;
 
     public VideoRenderer(ILogger<VideoRenderer> logger, IWebHostEnvironment environment)
     {
         _logger = logger;
         _ffmpegPath = Path.Combine(environment.ContentRootPath, "Models", "ffmpeg.exe");
+        _fontsFolder = Path.Combine(environment.ContentRootPath, "Fonts");
     }
 
     public async Task RenderKaraokeVideoAsync(string audioPath, string assSubtitlesPath, string outputVideoPath)
@@ -50,24 +52,26 @@ public class VideoRenderer
         // 2. colorize окрашивает эти волны в один тон (hue), выставляя отличную насыщенность (saturation=0.7)
         //    и среднюю яркость (lightness=0.5), чтобы не было черных или засвеченных мест.
         string arguments = $"-f lavfi -t {durationStr} -i \"color=c=black:s=540x960:r=30\" " +
-                           $"-i \"{audioPath}\" " +
-                           $"-filter_complex \"" +
-                           $"[0:v]geq=lum='128+110*sin(X/W+T*{speedStr})*cos(Y/H+T*{speedStr})'[bw_grid];" +
-                           $"[bw_grid]colorize=hue={randomHue}:saturation=0.7:lightness=0.5[raw_grad];" +
+                   $"-i \"{audioPath}\" " +
+                   $"-filter_complex \"" +
+                   $"[0:v]geq=lum='128+110*sin(X/W+T*{speedStr})*cos(Y/H+T*{speedStr})'[bw_grid];" +
 
-                           // Апскейлим до 1080x1920
-                           $"[raw_grad]scale=1080:1920:flags=bicubic," +
+                   // ИСПРАВЛЕНО: Заменили colorize на hue
+                   $"[bw_grid]hue=h={randomHue}:s=0.7[raw_grad];" +
 
-                           // Мощное размытие для превращения волн в жидкий шелк
-                           $"boxblur=luma_radius=150:luma_power=4:chroma_radius=150:chroma_power=4," +
+                   // Апскейлим до 1080x1920
+                   $"[raw_grad]scale=1080:1920:flags=bicubic," +
 
-                           // Накатываем субтитры
-                           $"subtitles='{escapedAssPath}'[outv]\" " +
+                   // Мощное размытие для превращения волн в жидкий шелк
+                   $"boxblur=luma_radius=150:luma_power=4:chroma_radius=150:chroma_power=4," +
 
-                           $"-map \"[outv]\" -map 1:a " +
+                   // ИСПРАВЛЕНО: Обернули путь в filename='...' для однозначного парсинга
+                   $"subtitles=filename='{escapedAssPath}'[outv]\" " +
 
-                           // Параметры совместимости для открытия на любых старых плеерах Windows/смартфонах
-                           $"-c:v libx264 -preset ultrafast -profile:v high -level:v 4.1 -pix_fmt yuv420p -crf 23 -c:a aac -y \"{outputVideoPath}\"";
+                   $"-map \"[outv]\" -map 1:a " +
+
+                   // Параметры совместимости для открытия на любых старых плеерах Windows/смартфонах
+                   $"-c:v libx264 -preset ultrafast -profile:v high -level:v 4.1 -pix_fmt yuv420p -crf 23 -c:a aac -y \"{outputVideoPath}\"";
 
         var startInfo = new ProcessStartInfo
         {
@@ -78,6 +82,11 @@ public class VideoRenderer
             UseShellExecute = false,
             CreateNoWindow = true
         };
+
+        // Добавляем переменную окружения для этого конкретного процесса
+        startInfo.EnvironmentVariables["FONTCONFIG_FILE"] = Path.Combine(_fontsFolder, "fonts.conf");
+        // Или просто указываем директорию (в зависимости от сборки FFmpeg):
+        startInfo.EnvironmentVariables["FC_CONFIG_DIR"] = _fontsFolder;
 
         _logger.LogInformation("FFmpeg запускает рендеринг видео...");
 

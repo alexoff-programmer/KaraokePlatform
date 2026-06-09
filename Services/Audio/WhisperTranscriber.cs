@@ -185,33 +185,30 @@ public class WhisperTranscriber
         sb.AppendLine("ScriptType: v4.00+");
         sb.AppendLine("PlayResX: 1080");
         sb.AppendLine("PlayResY: 1920");
+        sb.AppendLine("WrapStyle: 0");
         sb.AppendLine();
         sb.AppendLine("[V4+ Styles]");
         sb.AppendLine("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding");
 
-        // Параметры цвета в формате ASS (&HAABBGGRR - Alpha, Blue, Green, Red):
-        // PrimaryColour (Активное слово):   &H00FFFFFF -> Чистый белый, 100% непрозрачность
-        // SecondaryColour (Ожидание):       &HB0EFEFEF -> Почти белый, но с ~70% прозрачностью (дает эффект приглушенности)
-        // OutlineColour (Контур):           &H00000000 -> Черный, но толщина Outline=0, он не виден, служит хаком для рендереров
-        // BackColour (Тень):                &H90000000 -> Черная тень с мягкой ~55% прозрачностью для объема на светлых участках градиента
-
-        // Шрифт: С интервалом между букв (Spacing: 1) и увеличенным масштабом для веса.
-        // Alignment: 5 (Строгий центр). MarginV: 0 (так как выравнивание по центру, MarginV сдвигает текст от центра вверх/вниз)
-        sb.AppendLine("Style: KaraokeStyle,Arial Black,72,&H00FFFFFF,&HB0EFEFEF,&H00000000,&H90000000,-1,0,0,0,105,100,1,0,1,0,8,5,80,80,0,1");
+        // ИСПРАВЛЕНО: Полное имя шрифта "Montserrat", флаг Bold (-1), размер 90 для читаемости на 1080p, добавлен Outline (2)
+        sb.AppendLine("Style: KaraokeStyle,Montserrat,90,&H00FFFFFF,&H0000FFFF,&H00000000,&H00000000,-1,0,0,0,100,100,2,0,1,2,0,5,100,100,0,1");
         sb.AppendLine();
         sb.AppendLine("[Events]");
         sb.AppendLine("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text");
 
-        // НАСТРОЙКА: Сколько слов объединять в один блок субтитров
-        const int wordsPerBlock = 6;
+        const int wordsPerBlock = 8;
+        var timeShift = TimeSpan.FromMilliseconds(250);
 
         for (int i = 0; i < words.Count; i += wordsPerBlock)
         {
             var chunk = words.Skip(i).Take(wordsPerBlock).ToList();
 
-            // Время жизни всего блока на экране
-            var lineStart = chunk.First().Start;
-            var lineEnd = chunk.Last().End;
+            var lineStart = chunk.First().Start - timeShift;
+            var lineEnd = chunk.Last().End - timeShift;
+
+            // Защита от ухода в отрицательное время из-за таймшифта
+            if (lineStart < TimeSpan.Zero) lineStart = TimeSpan.Zero;
+            if (lineEnd < TimeSpan.Zero) lineEnd = TimeSpan.Zero;
 
             string assStart = FormatTimeSpanForAss(lineStart);
             string assEnd = FormatTimeSpanForAss(lineEnd);
@@ -219,55 +216,60 @@ public class WhisperTranscriber
             var lineBuilder = new StringBuilder();
             TimeSpan currentTime = lineStart;
 
-            // Определяем индекс, на котором сделаем перенос строки (ровно посередине чанка)
             int halfIndex = chunk.Count / 2;
 
             for (int j = 0; j < chunk.Count; j++)
             {
                 var word = chunk[j];
 
-                // Вставляем перенос строки \N перед элементом второй половины
+                // ИСПРАВЛЕНО: Безопасная вставка знака переноса строки БЕЗ ломающих пробелов
                 if (j == halfIndex)
                 {
-                    // Убираем лишний пробел перед переносом, если он остался от предыдущего слова
-                    if (lineBuilder.Length > 0 && lineBuilder[lineBuilder.Length - 1] == ' ')
-                    {
-                        lineBuilder.Length--;
-                    }
                     lineBuilder.Append("\\N");
                 }
 
+                var shiftedWordStart = word.Start - timeShift;
+                var shiftedWordEnd = word.End - timeShift;
+                if (shiftedWordStart < TimeSpan.Zero) shiftedWordStart = TimeSpan.Zero;
+                if (shiftedWordEnd < TimeSpan.Zero) shiftedWordEnd = TimeSpan.Zero;
+
                 // Считаем паузу перед словом
-                var pauseDuration = word.Start - currentTime;
-                if (pauseDuration.TotalMilliseconds > 0)
+                var pauseDuration = shiftedWordStart - currentTime;
+                if (pauseDuration.TotalMilliseconds > 10) // Исключаем микро-паузы меньше сантисекунды
                 {
                     int pauseCs = (int)Math.Round(pauseDuration.TotalMilliseconds / 10.0);
-                    lineBuilder.Append($"{{\\kf{pauseCs}}} ");
+                    lineBuilder.Append($"{{\\kf{pauseCs}}}");
                 }
 
-                // Считаем длительность подсветки слова
+                // Считаем длительность самого слова
                 int wordCs = (int)Math.Round(word.Duration.TotalMilliseconds / 10.0);
+                if (wordCs <= 0) wordCs = 1; // Защита от нулевой длительности
 
-                // Добавляем караоке тег и само слово
-                lineBuilder.Append($"{{\\kf{wordCs}}}{word.Text} ");
+                // ИСПРАВЛЕНО: Пробел ставится СТРОГО после текста слова, разделяя токены, но не ломая теги караоке
+                lineBuilder.Append($"{{\\kf{wordCs}}}{word.Text}");
 
-                currentTime = word.End;
+                // Добавляем пробел между словами, если это не последнее слово перед переносом или концом строки
+                if (j != halfIndex - 1 && j != chunk.Count - 1)
+                {
+                    lineBuilder.Append(" ");
+                }
+
+                currentTime = shiftedWordEnd;
             }
 
-            // Записываем готовую двухстрочную реплику в ASS файл
-            sb.AppendLine($"Dialogue: 0,{assStart},{assEnd},KaraokeStyle,,0,0,0,,{lineBuilder.ToString().Trim()}");
+            sb.AppendLine($"Dialogue: 0,{assStart},{assEnd},KaraokeStyle,,0,0,0,,{lineBuilder.ToString()}");
         }
 
         return sb.ToString();
     }
 
-    /// <summary>
-    /// Хелпер форматирования TimeSpan в стандарт субтитров ASS (H:MM:SS.cs)
-    /// </summary>
     private string FormatTimeSpanForAss(TimeSpan ts)
     {
-        // ASS требует формат с двумя знаками после запятой (сантисекунды)
-        int centiseconds = ts.Milliseconds / 10;
-        return $"{ts.Hours}:{ts.Minutes:D2}:{ts.Seconds:D2}.{centiseconds:D2}";
+        // ИСПРАВЛЕНО: Округляем миллисекунды до сантисекунд (2 знака) корректно, без усечения
+        int centiseconds = (int)Math.Round(ts.Milliseconds / 10.0);
+        if (centiseconds >= 100) centiseconds = 99;
+
+        // Формат ASS строго требует: H:MM:SS.cs (одна цифра на часы)
+        return $"{ts.Hours:D1}:{ts.Minutes:D2}:{ts.Seconds:D2}.{centiseconds:D2}";
     }
 }
