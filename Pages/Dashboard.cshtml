@@ -12,6 +12,15 @@
             <h1 class="h2 fw-bold text-dark">Добро пожаловать, @User.Identity?.Name</h1>
             <p class="text-muted">Ваша личная студия обработки аудио в караоке-видео.</p>
         </div>
+        @* Кнопка отображается только если у пользователя есть роль Admin *@
+        @if (User.IsInRole("Admin"))
+        {
+            <div class="col-md-4 text-md-end">
+                <a asp-page="/Admin/ManageUsers" class="btn btn-outline-danger btn-lg fw-bold rounded-3 shadow-sm">
+                    <i class="bi bi-shield-lock-fill me-2"></i>Панель администратора
+                </a>
+            </div>
+        }
     </div>
 
     <div class="row g-4">
