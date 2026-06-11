@@ -28,6 +28,7 @@ namespace KaraokePlatform.Data.Entities
 
         // Путь к готовому .mp4 файлу (будет пустым, пока статус не Completed)
         public string? VideoFilePath { get; set; }
+        public string? BackgroundImagePath { get; set; } // Nullable, так как фон может быть просто черным
 
         [Required]
         public KaraokeTaskStatus Status { get; set; } = KaraokeTaskStatus.InQueue;

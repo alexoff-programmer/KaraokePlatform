@@ -2,11 +2,13 @@ using KaraokePlatform.Data;
 using KaraokePlatform.Services;
 using KaraokePlatform.Services.Background;
 using KaraokePlatform.Services.Audio;
+using KaraokePlatform.Services.Audio.Interfaces;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.EntityFrameworkCore;
 using KaraokePlatform.Services.Video;
 using KaraokePlatform.Hubs;
 using KaraokePlatform.Settings;
+
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -33,6 +35,10 @@ builder.Services.AddScoped<UserService>();
 
 // РЕГИСТРАЦИЯ СЕРВИСОВ ДЛЯ ОБРАБОТКИ АУДИО
 builder.Services.Configure<WhisperSettings>(builder.Configuration.GetSection("WhisperSettings"));
+builder.Services.AddScoped<IAudioProcessor, AudioProcessor>();
+builder.Services.AddScoped<ISpeechRecognizer, WhisperRecognizer>();
+builder.Services.AddScoped<ISubtitleGenerator, AssSubtitleGenerator>();
+builder.Services.AddScoped<IAudioSilenceAnalyzer, AudioSilenceAnalyzer>();
 builder.Services.AddScoped<WhisperTranscriber>();
 
 // РЕГИСТРАЦИЯ СЕРВИСОВ ДЛЯ ОБРАБОТКИ ВИДЕО

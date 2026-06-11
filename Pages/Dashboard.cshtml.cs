@@ -31,6 +31,9 @@ public class DashboardModel : PageModel
     [BindProperty]
     public string SelectedLanguage { get; set; } = "auto";
 
+    [BindProperty]
+    public IFormFile? UploadedBackground { get; set; }
+
     public List<KaraokeTask> UserTasks { get; set; } = new();
 
     public string ErrorMessage { get; set; } = string.Empty;
@@ -63,68 +66,89 @@ public class DashboardModel : PageModel
     // Метод срабатывает при загрузке MP3 файла
     public async Task<IActionResult> OnPostUploadAsync()
     {
+        // Валидация аудио
         if (UploadedAudio == null || UploadedAudio.Length == 0)
         {
             TempData["ErrorMessage"] = "Пожалуйста, выберите корректный аудиофайл.";
-            return RedirectToPage(); // ДЕЛАЕМ РЕДИРЕКТ (GET) ВМЕСТО RETURN PAGE()
+            return RedirectToPage();
         }
 
-        if (UploadedAudio == null || UploadedAudio.Length == 0)
+        var audioExtension = Path.GetExtension(UploadedAudio.FileName).ToLower();
+        if (audioExtension != ".mp3")
         {
-            ErrorMessage = "Пожалуйста, выберите корректный аудиофайл.";
-            await LoadUserTasksAsync();
-            return Page();
+            TempData["ErrorMessage"] = "Допускаются только файлы в формате .mp3";
+            return RedirectToPage();
         }
 
-        // Проверяем расширение файла
-        var extension = Path.GetExtension(UploadedAudio.FileName).ToLower();
-        if (extension != ".mp3")
+        // Валидация изображения
+        string? dbBackgroundPath = null;
+        if (UploadedBackground != null && UploadedBackground.Length > 0)
         {
-            ErrorMessage = "Допускаются только файлы в формате .mp3";
-            await LoadUserTasksAsync();
-            return Page();
+            var bgExtension = Path.GetExtension(UploadedBackground.FileName).ToLower();
+            var allowedExtensions = new[] { ".jpg", ".jpeg", ".png" };
+
+            if (!allowedExtensions.Contains(bgExtension))
+            {
+                TempData["ErrorMessage"] = "Для фона допускаются только изображения (.jpg, .jpeg, .png)";
+                return RedirectToPage();
+            }
+
+            // Создаем отдельную папку для фонов внутри wwwroot
+            var bgFolder = Path.Combine(_environment.WebRootPath, "uploads", "backgrounds");
+            if (!Directory.Exists(bgFolder))
+            {
+                Directory.CreateDirectory(bgFolder);
+            }
+
+            var uniqueBgName = $"{Guid.NewGuid()}{bgExtension}";
+            var bgFilePath = Path.Combine(bgFolder, uniqueBgName);
+
+            // Сохраняем картинку на диск
+            using (var fileStream = new FileStream(bgFilePath, FileMode.Create))
+            {
+                await UploadedBackground.CopyToAsync(fileStream);
+            }
+
+            // Формируем относительный путь для сохранения в БД
+            dbBackgroundPath = Path.Combine("uploads", "backgrounds", uniqueBgName);
         }
 
-        // Получаем ID текущего залогиненного юзера из куки
         var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (!Guid.TryParse(userIdClaim, out Guid userId))
         {
             return RedirectToPage("/Index");
         }
 
-        // ЗАЩИТА: Проверяем, существует ли этот пользователь в актуальной БД
         bool userExists = await _context.Users.AnyAsync(u => u.Id == userId);
         if (!userExists)
         {
-            // Если пользователя нет (базу сбросили), принудительно разлогиниваем его и отправляем на вход
             await HttpContext.SignOutAsync(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme);
             TempData["ErrorMessage"] = "Сессия устарела. Пожалуйста, войдите снова.";
             return RedirectToPage("/Index");
         }
 
-        // Гарантируем, что папка для загрузок существует внутри wwwroot
+        // Сохранение аудиофайла на диск
         var uploadsFolder = Path.Combine(_environment.WebRootPath, "uploads");
         if (!Directory.Exists(uploadsFolder))
         {
             Directory.CreateDirectory(uploadsFolder);
         }
 
-        // Генерируем уникальное имя файла на сервере
-        var uniqueFileName = $"{Guid.NewGuid()}{extension}";
-        var filePath = Path.Combine(uploadsFolder, uniqueFileName);
+        var uniqueAudioName = $"{Guid.NewGuid()}{audioExtension}";
+        var audioFilePath = Path.Combine(uploadsFolder, uniqueAudioName);
 
-        // Физически сохраняем файл на диск
-        using (var fileStream = new FileStream(filePath, FileMode.Create))
+        using (var fileStream = new FileStream(audioFilePath, FileMode.Create))
         {
             await UploadedAudio.CopyToAsync(fileStream);
         }
 
-        // Сохраняем задачу в базу данных
+        // Запись в базу данных
         var newTask = new KaraokeTask
         {
             UserId = userId,
             OriginalFileName = UploadedAudio.FileName,
-            AudioFilePath = Path.Combine("uploads", uniqueFileName), // относительный путь для веба
+            AudioFilePath = Path.Combine("uploads", uniqueAudioName),
+            BackgroundImagePath = dbBackgroundPath, // <-- ПЕРЕДАЕМ ПУТЬ К КАРТИНКЕ (или null, если файла нет)
             Language = SelectedLanguage,
             Status = TaskStatus.InQueue,
             CreatedAt = DateTime.UtcNow
@@ -133,14 +157,9 @@ public class DashboardModel : PageModel
         _context.KaraokeTasks.Add(newTask);
         await _context.SaveChangesAsync();
 
-        SuccessMessage = "Файл успешно загружен и добавлен в очередь на обработку!";
-
-        // Отправляем ID созданной задачи в фоновый воркер через канал
         await _queueChannel.AddTaskAsync(newTask.Id);
 
-        // Кладем сообщение об успехе в TempData
         TempData["SuccessMessage"] = "Файл успешно загружен и добавлен в очередь на обработку!";
-
         return RedirectToPage();
     }
 
@@ -149,6 +168,28 @@ public class DashboardModel : PageModel
         var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (Guid.TryParse(userIdClaim, out Guid userId))
         {
+            // Находим задачи, которые "зависли" в обработке (например, более 15 минут)
+            var timeoutLimit = DateTime.UtcNow.AddMinutes(-15);
+
+            var staleTasks = await _context.KaraokeTasks
+                .Where(t => t.UserId == userId &&
+                            (t.Status == TaskStatus.Processing || t.Status == TaskStatus.InQueue) &&
+                            t.CreatedAt < timeoutLimit)
+                .ToListAsync();
+
+            // Если нашли такие задачи, переводим их в статус Failed
+            if (staleTasks.Any())
+            {
+                foreach (var task in staleTasks)
+                {
+                    task.Status = TaskStatus.Failed;
+                    task.ErrorMessage = "Превышено время ожидания. Похоже, процесс был прерван.";
+                }
+
+                // Сохраняем изменения автоматически при заходе пользователя на страницу
+                await _context.SaveChangesAsync();
+            }
+
             // Загружаем задачи текущего пользователя, сортируя по новизне
             UserTasks = await _context.KaraokeTasks
                 .Where(t => t.UserId == userId)

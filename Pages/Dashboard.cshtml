@@ -34,6 +34,12 @@
                         <input asp-for="UploadedAudio" class="form-control form-control-lg" type="file" accept=".mp3"
                                required />
                     </div>
+                    <div class="mb-3">
+                        <label class="form-label text-muted small">Фоновое изображение (необязательно)</label>
+                        <input asp-for="UploadedBackground" class="form-control form-control-lg" type="file"
+                               accept=".jpg,.jpeg,.png" />
+                        <div class="form-text small text-muted">Если не выбрать, фон останется черным.</div>
+                    </div>
                     <div class="mb-4">
                         <label class="form-label text-muted small">Язык</label>
                         <select asp-for="SelectedLanguage" class="form-select form-select-lg">
@@ -109,131 +115,133 @@
                                                             }
                                                 else if (task.Status == KaraokeTaskStatus.Failed)
                                                             {
-                                                                <span class="text-danger small" title="@task.ErrorMessage"><i
-                                                                    class="bi bi-exclamation-triangle-fill me-1"></i>Ошибка</span>
-                                                                }
-                                                            </td>
-                                                            <td class="task-action text-end">
-                                                                @if (task.Status == KaraokeTaskStatus.Completed &&
-                                        !string.IsNullOrEmpty(task.VideoFilePath))
-                                                                {
-                                                                    @* Берем оригинальное имя, убираем старое расширение .mp3 (если есть) и
+                                                                <span class="text-danger small"
+                                                                      title="@(string.IsNullOrEmpty(task.ErrorMessage) ? "Ошибка обработки" : task.ErrorMessage)">
+                                                                    <i class="bi bi-exclamation-triangle-fill me-1"></i>Ошибка
+                                                                </span>
+                                                            }
+                                                        </td>
+                                                        <td class="task-action text-end">
+                                                            @if (task.Status == KaraokeTaskStatus.Completed &&
+                                    !string.IsNullOrEmpty(task.VideoFilePath))
+                                                            {
+                                                                @* Берем оригинальное имя, убираем старое расширение .mp3 (если есть) и
                                                                     добавляем .mp4 *@
-                                                                    var downloadName =
-                                                                    System.IO.Path.GetFileNameWithoutExtension(task.OriginalFileName) +
-                                                                    ".mp4";
+                                                                var downloadName =
+                                                                System.IO.Path.GetFileNameWithoutExtension(task.OriginalFileName) +
+                                                                ".mp4";
 
-                                                                    <a href="/@task.VideoFilePath"
-                                                                       class="btn btn-sm btn-outline-success rounded-3 px-3"
-                                                                       download="@downloadName">
-                                                                        <i class="bi bi-download me-1"></i>MP4
-                                                                    </a>
+                                                                <a href="/@task.VideoFilePath"
+                                                                   class="btn btn-sm btn-outline-success rounded-3 px-3"
+                                                                   download="@downloadName">
+                                                                    <i class="bi bi-download me-1"></i>MP4
+                                                                </a>
+                                                            }
+                                                            else if (task.Status == KaraokeTaskStatus.Processing)
+                                                            {
+                                                                <button class="btn btn-sm btn-light rounded-3 text-muted" disabled><i
+                                                                    class="bi bi-cpu"></i></button>
                                                                 }
-                                                                else if (task.Status == KaraokeTaskStatus.Processing)
+                                                else
                                                                 {
                                                                     <button class="btn btn-sm btn-light rounded-3 text-muted" disabled><i
-                                                                        class="bi bi-cpu"></i></button>
+                                                                        class="bi bi-dash-lg"></i></button>
                                                                     }
-                                                else
-                                                                    {
-                                                                        <button class="btn btn-sm btn-light rounded-3 text-muted" disabled><i
-                                                                            class="bi bi-dash-lg"></i></button>
-                                                                        }
-                                                                    </td>
-                                                                </tr>
-                                                            }
-                                                        </tbody>
-                                                    </table>
-                                                </div>
-                                            }
-                                        </div>
+                                                                </td>
+                                                            </tr>
+                                                        }
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        }
                                     </div>
                                 </div>
                             </div>
                         </div>
+                    </div>
 
-                        @section Scripts {
-                            <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
-                            @* Подключаем Bootstrap Icons для интерфейса таблиц *@
-                            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+                    @section Scripts {
+                        <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
+                        @* Подключаем Bootstrap Icons для интерфейса таблиц *@
+                        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
 
-                            <script>
-                                const connection = new signalR.HubConnectionBuilder()
-                                .withUrl("/notificationHub")
-                                .withAutomaticReconnect()
-                                .build();
+                        <script>
+                            const connection = new signalR.HubConnectionBuilder()
+                            .withUrl("/notificationHub")
+                            .withAutomaticReconnect()
+                            .build();
 
-                                connection.on("UpdateTaskStatus", function (taskId, status, videoUrl) {
-                                const row = document.getElementById("task-" + taskId);
-                                if (!row) return;
+                            connection.on("UpdateTaskStatus", function (taskId, status, videoUrl) {
+                            const row = document.getElementById("task-" + taskId);
+                            if (!row) return;
 
-                                const statusCell = row.querySelector(".task-status");
-                                const actionCell = row.querySelector(".task-action");
+                            const statusCell = row.querySelector(".task-status");
+                            const actionCell = row.querySelector(".task-action");
 
-                                if (status.startsWith("Processing")) {
-                                let container = statusCell.querySelector(".processing-container");
+                            if (status.startsWith("Processing")) {
+                            let container = statusCell.querySelector(".processing-container");
 
-                                // Если задача только перешла из очереди ("InQueue") — строим чистую HTML структуру прогресса
-                                if (!container) {
-                                statusCell.innerHTML = `
-                                <div class="processing-container">
-                                <div class="d-flex align-items-center text-warning small mb-1">
-                                <div class="spinner-border spinner-border-sm me-2" role="status"></div>
-                                <span class="processing-text">Обработка...</span>
-                                </div>
-                                <div class="progress" style="height: 4px; background-color: #f0f0f0;">
-                                <div class="progress-bar progress-bar-striped progress-bar-animated bg-warning" role="progressbar" style="width: 10%"></div>
-                                </div>
-                                </div>`;
-                                container = statusCell.querySelector(".processing-container");
-                                }
+                            // Если задача только перешла из очереди ("InQueue") — строим чистую HTML структуру прогресса
+                            if (!container) {
+                            statusCell.innerHTML = `
+                            <div class="processing-container">
+                            <div class="d-flex align-items-center text-warning small mb-1">
+                            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                            <span class="processing-text">Обработка...</span>
+                            </div>
+                            <div class="progress" style="height: 4px; background-color: #f0f0f0;">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated bg-warning" role="progressbar" style="width: 10%"></div>
+                            </div>
+                            </div>`;
+                            container = statusCell.querySelector(".processing-container");
+                            }
 
-                                const textElement = container.querySelector(".processing-text");
-                                const progressBar = container.querySelector(".progress-bar");
+                            const textElement = container.querySelector(".processing-text");
+                            const progressBar = container.querySelector(".progress-bar");
 
-                                // Вытаскиваем числовое значение процентов регуляркой
-                                const match = status.match(/\d+/);
-                                const percent = match ? match[0] : "10";
+                            // Вытаскиваем числовое значение процентов регуляркой
+                            const match = status.match(/\d+/);
+                            const percent = match ? match[0] : "10";
 
-                                // Определяем красивый подтекст (если бэкенд передал скобки, например: "(Сборка видео...)")
-                                let textDescription = `Обработка: ${percent}%`;
-                                if (status.includes("(")) {
-                                const subPhase = status.substring(status.indexOf("(") + 1, status.indexOf(")"));
-                                textDescription = `${subPhase} (${percent}%)`;
-                                }
+                            // Определяем красивый подтекст (если бэкенд передал скобки, например: "(Сборка видео...)")
+                            let textDescription = `Обработка: ${percent}%`;
+                            if (status.includes("(")) {
+                            const subPhase = status.substring(status.indexOf("(") + 1, status.indexOf(")"));
+                            textDescription = `${subPhase} (${percent}%)`;
+                            }
 
-                                // Обновляем состояние атомарно: только текст и только ширину полосы (никакого изменения высоты строки!)
-                                if (textElement) textElement.innerText = textDescription;
-                                if (progressBar) progressBar.style.width = percent + "%";
+                            // Обновляем состояние атомарно: только текст и только ширину полосы (никакого изменения высоты строки!)
+                            if (textElement) textElement.innerText = textDescription;
+                            if (progressBar) progressBar.style.width = percent + "%";
 
-                                actionCell.innerHTML = `<button class="btn btn-sm btn-light rounded-3 text-muted" disabled><i class="bi bi-cpu"></i></button>`;
-                                }
-                                else if (status === "Completed") {
-                                statusCell.innerHTML = `<span class="text-success small"><i class="bi bi-check-circle-fill me-1"></i>Готово</span>`;
+                            actionCell.innerHTML = `<button class="btn btn-sm btn-light rounded-3 text-muted" disabled><i class="bi bi-cpu"></i></button>`;
+                            }
+                            else if (status === "Completed") {
+                            statusCell.innerHTML = `<span class="text-success small"><i class="bi bi-check-circle-fill me-1"></i>Готово</span>`;
 
-                                // Находим оригинальное имя файла из первой колонки текущей строки
-                                const fileNameCell = row.querySelector("td.text-truncate");
-                                let downloadName = "video.mp4";
-                                if (fileNameCell) {
-                                // Убираем расширение .mp3, если оно есть, и принудительно ставим .mp4
-                                const originalName = fileNameCell.innerText.trim();
-                                downloadName = originalName.replace(/\.[^/.]+$/, "") + ".mp4";
-                                }
+                            // Находим оригинальное имя файла из первой колонки текущей строки
+                            const fileNameCell = row.querySelector("td.text-truncate");
+                            let downloadName = "video.mp4";
+                            if (fileNameCell) {
+                            // Убираем расширение .mp3, если оно есть, и принудительно ставим .mp4
+                            const originalName = fileNameCell.innerText.trim();
+                            downloadName = originalName.replace(/\.[^/.]+$/, "") + ".mp4";
+                            }
 
-                                // Подставляем сформированное имя в атрибут download
-                                actionCell.innerHTML = `<a href="/${videoUrl}" class="btn btn-sm btn-outline-success rounded-3 px-3" download="${downloadName}"><i class="bi bi-download me-1"></i>MP4</a>`;
+                            // Подставляем сформированное имя в атрибут download
+                            actionCell.innerHTML = `<a href="/${videoUrl}" class="btn btn-sm btn-outline-success rounded-3 px-3" download="${downloadName}"><i class="bi bi-download me-1"></i>MP4</a>`;
 
-                                row.classList.add("table-success");
-                                setTimeout(() => row.classList.remove("table-success"), 2500);
-                                }
-                                else if (status === "Failed") {
-                                statusCell.innerHTML = `<span class="text-danger small"><i class="bi bi-exclamation-triangle-fill me-1"></i>Ошибка</span>`;
-                                actionCell.innerHTML = `<button class="btn btn-sm btn-light rounded-3 text-muted" disabled><i class="bi bi-dash-lg"></i></button>`;
-                                }
-                                });
+                            row.classList.add("table-success");
+                            setTimeout(() => row.classList.remove("table-success"), 2500);
+                            }
+                            else if (status === "Failed") {
+                            statusCell.innerHTML = `<span class="text-danger small"><i class="bi bi-exclamation-triangle-fill me-1"></i>Ошибка</span>`;
+                            actionCell.innerHTML = `<button class="btn btn-sm btn-light rounded-3 text-muted" disabled><i class="bi bi-dash-lg"></i></button>`;
+                            }
+                            });
 
-                                connection.start().catch(function (err) {
-                                return console.error(err.toString());
-                                });
-                            </script>
-                        }
+                            connection.start().catch(function (err) {
+                            return console.error(err.toString());
+                            });
+                        </script>
+                    }
