@@ -18,6 +18,9 @@ if (!Directory.Exists(instancePath))
     Directory.CreateDirectory(instancePath);
 }
 
+// Проверяем наличие модели при старте приложения и скачиваем её, если она отсутствует
+await ModelDownloader.EnsureModelExistsAsync(builder.Environment.ContentRootPath);
+
 // Регистрация базы данных SQLite
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
