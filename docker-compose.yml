@@ -2,23 +2,21 @@ version: '3.8'
 
 services:
   karaoke-app:
+    container_name: karaoke_platform_container
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: karaoke_platform_service
-    restart: always
     ports:
-      - "80:8080" # Твой сайт будет доступен на стандартном 80 порту сервера
-    volumes:
-      # 1. Сохраняем сгенерированные видео и загруженные mp3 снаружи контейнера
-      - ./wwwroot_data/output:/app/wwwroot/output
-      - ./wwwroot_data/uploads:/app/wwwroot/uploads
-      
-      # 2. Мапим папку с моделями Whisper, чтобы не качать их внутрь контейнера заново
-      - ./Models:/app/Models
-      
-      # 3. ВАЖНО ДЛЯ SQLITE: выносим файл БД наружу.
-      # Предполагаем, что в Connection String путь указан как "Data Source=Database/karaoke.db"
-      - ./Database:/app/Database
+      - "5000:8080" # Приложение будет доступно по адресу http://localhost:5000
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
+    volumes:
+      # Сохраняем базу данных SQLite
+      - ./instance:/app/instance
+      # Сохраняем загруженные файлы пользователей и готовые MP4
+      - ./wwwroot/uploads:/app/wwwroot/uploads
+      - ./wwwroot/output:/app/wwwroot/output
+      # Сохраняем скачанные ИИ-модели (Whisper и ONNX), чтобы они не качались заново при перезапуске
+      - ./Models:/app/Models
+      - /root/.cache/audio-separator:/root/.cache/audio-separator
+    restart: always

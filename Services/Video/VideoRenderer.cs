@@ -25,11 +25,7 @@ public class VideoRenderer
         string escapedAssPath = assSubtitlesPath.Replace("\\", "/").Replace(":", "\\:");
 
         double audioDurationSeconds;
-        using (var reader = new NAudio.Wave.AudioFileReader(audioPath))
-        {
-            audioDurationSeconds = await GetAudioDurationAsync(audioPath);
-        }
-
+        audioDurationSeconds = await GetAudioDurationAsync(audioPath);
         string durationStr = audioDurationSeconds.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
         string arguments;
 

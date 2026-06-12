@@ -15,7 +15,7 @@ public class AudioProcessor : IAudioProcessor
     public void ConvertAndFilterMp3ToWav(string inputPath, string outputPath, Action<int>? onProgress = null)
     {
         // Переносим временную папку в корень диска C, чтобы защититься от багов с кириллицей в путях Пользователя
-        string tempOutputDir = Path.Combine("C:\\", "KaraokeTemp", $"sep_{Guid.NewGuid()}");
+        string tempOutputDir = Path.Combine(Path.GetTempPath(), "KaraokeTemp", $"sep_{Guid.NewGuid()}");
         Directory.CreateDirectory(tempOutputDir);
 
         try
