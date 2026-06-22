@@ -26,6 +26,11 @@ namespace KaraokePlatform.Data.Entities
         [MaxLength(10)]
         public string Language { get; set; } = "auto"; // По умолчанию автоопределение
 
+        [Required]
+        public bool RemoveVocal { get; set; } = true; // По умолчанию включено
+
+        public string? DetectedLinesJson { get; set; }
+
         // Путь к готовому .mp4 файлу (будет пустым, пока статус не Completed)
         public string? VideoFilePath { get; set; }
         public string? BackgroundImagePath { get; set; } // Nullable, так как фон может быть просто черным

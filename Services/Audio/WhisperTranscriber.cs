@@ -3,6 +3,7 @@ using System.IO;
 using System.Text;
 using System.Threading.Tasks;
 using KaraokePlatform.Services.Audio.Interfaces;
+using KaraokePlatform.Services.Audio.Records;
 
 namespace KaraokePlatform.Services.Audio;
 
@@ -25,52 +26,48 @@ public class WhisperTranscriber
         _subtitleGenerator = subtitleGenerator;
     }
 
-    public async Task<string> ProcessAudioAsync(string mp3FilePath, string outputFolder, string language, Action<int> onProgress)
+    // ИСПРАВЛЕНО: Теперь принимает bool removeVocal и возвращает объект TranscriberResult
+    // Измени возвращаемый тип на список фраз (List<List<WordTimeInfo>>)
+    public async Task<List<List<WordTimeInfo>>> ProcessAudioToPhrasesAsync(
+    Guid taskId,
+    string mp3FilePath,
+    string language,
+    Action<int> onProgress)
     {
-        // КРОССПЛАТФОРМЕННЫЙ ФИКС: Создаем temp строго внутри папки выполнения приложения
+        // Кросплатформенный temp
         string tempRoot = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "temp");
         Directory.CreateDirectory(tempRoot);
 
-        string wavPath = Path.Combine(tempRoot, $"{Guid.NewGuid()}.wav");
-        string assFileName = $"{Guid.NewGuid()}.ass";
-        string assOutputPath = Path.Combine(outputFolder, assFileName);
-        string targetLanguage = string.IsNullOrWhiteSpace(language) ? "ru" : language;
+        // Использовали taskId для входящего вокала
+        string whisperVavPath = Path.Combine(tempRoot, $"{taskId}_whisper.wav");
+
+        // ЖЕСТКИЙ ФИКС: Для минусовки в папке output ТАКЖЕ используем taskId вместо Guid!
+        // Теперь имя файла будет вида: "wwwroot/output/ИД_ЗАДАЧИ_instrumental.wav"
+        string outputFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wwwroot", "output");
+        Directory.CreateDirectory(outputFolder);
+        string instrumentalWavPath = Path.Combine(outputFolder, $"{taskId}_instrumental.wav");
 
         try
         {
-            // 1. ИИ-разделение аудио (0% -> 25%)
-            _audioProcessor.ConvertAndFilterMp3ToWav(mp3FilePath, wavPath, onProgress);
-
+            // Передаем фиксированные пути в AudioProcessor
+            _audioProcessor.ConvertAndFilterMp3ToWav(mp3FilePath, whisperVavPath, instrumentalWavPath, onProgress);
             onProgress.Invoke(25);
 
-            // 2. Акустический анализ тишины по чистому вокалу
-            var vocalIntervals = _silenceAnalyzer.GetVocalIntervals(wavPath, thresholdDb: -42.0);
+            var vocalIntervals = _silenceAnalyzer.GetVocalIntervals(whisperVavPath, thresholdDb: -42.0);
 
-            // 3. Распознавание речи Whisper (25% -> 50%)
             var words = await _speechRecognizer.TranscribeAndMergeTokensAsync(
-                wavPath,
-                targetLanguage,
-                vocalIntervals,
-                whisperProgress =>
-                {
-                    int scaledProgress = 25 + (whisperProgress * 25 / 100);
-                    onProgress.Invoke(scaledProgress);
-                });
+                whisperVavPath, language, vocalIntervals,
+                p => onProgress.Invoke(25 + (p * 25 / 100)));
 
-            // 4. Формирование ASS файла субтитров
-            onProgress.Invoke(55);
-            string assContent = _subtitleGenerator.GenerateKaraokeMarkup(words);
-            await File.WriteAllTextAsync(assOutputPath, assContent, Encoding.UTF8);
+            var generator = new AssSubtitleGenerator();
+            // Делаем метод GroupWordsIntoPhrases публичным в AssSubtitleGenerator
+            var phrases = generator.GroupWordsIntoPhrases(words);
 
-            onProgress.Invoke(60);
-            return assOutputPath;
+            return phrases;
         }
         finally
         {
-            if (File.Exists(wavPath))
-            {
-                try { File.Delete(wavPath); } catch { }
-            }
+            if (File.Exists(whisperVavPath)) try { File.Delete(whisperVavPath); } catch { }
         }
     }
 }

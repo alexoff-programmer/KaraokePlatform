@@ -1,0 +1,43 @@
+@page
+@model KaraokePlatform.Pages.EditSubtitlesModel
+@{
+    ViewData["Title"] = "Редактирование текста песни";
+}
+
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card border-0 shadow-sm rounded-4 p-4">
+                <h2 class="fw-bold text-dark mb-1">Проверка распознанного текста</h2>
+                <p class="text-muted mb-4">Файл: <span class="badge bg-secondary">@Model.OriginalFileName</span></p>
+
+                <div class="alert alert-info small rounded-3">
+                    <i class="bi bi-info-circle-fill me-2"></i> Исправьте опечатки, пропущенные буквы или разбейте слова
+                    пробелами. Тайминги караоке автоматически подстроятся под новые слова внутри строки.
+                </div>
+
+                <form method="post" asp-page-handler="Save">
+                    <input type="hidden" asp-for="TaskId" />
+
+                    <div class="vstack gap-3 mb-4" style="max-height: 60vh; overflow-y: auto; padding-right: 10px;">
+                        @for (int i = 0; i < Model.EditedLines.Count; i++)
+                        {
+                            <div class="input-group">
+                                <span class="input-group-text bg-light text-muted small fw-bold">Строка @(i + 1)</span>
+                                <input type="text" asp-for="EditedLines[i]" class="form-control form-control-lg text-dark"
+                                       autocomplete="off" />
+                            </div>
+                        }
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <a asp-page="/Dashboard" class="btn btn-light btn-lg rounded-3 flex-grow-1">Отмена</a>
+                        <button type="submit" class="btn btn-primary btn-lg rounded-3 flex-grow-1 fw-bold">
+                            <i class="bi bi-vector-pen me-2"></i>Утвердить и собрать видео
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>

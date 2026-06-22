@@ -8,7 +8,7 @@ WORKDIR /src
 COPY KaraokePlatform.csproj ./
 RUN dotnet restore KaraokePlatform.csproj
 
-# Копируем остальные исходники и публикуем конкретный проект, а не решение целиком
+# Копируем остальные исходники и публикуем конкретный проект
 COPY . ./
 RUN dotnet publish KaraokePlatform.csproj -c Release -o /app
 
@@ -18,7 +18,7 @@ RUN dotnet publish KaraokePlatform.csproj -c Release -o /app
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
-# Устанавливаем системные зависимости: Python3, pip, ffmpeg и шрифты для субтитров
+# Устанавливаем системные зависимости: Python3, pip, ffmpeg и шрифты
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
@@ -30,7 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Создаем виртуальное окружение Python и устанавливаем audio-separator
+# Создаем виртуальное окружение Python и устанавливаем audio-separator для CPU
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 RUN pip install --no-cache-dir audio-separator[cpu]
@@ -38,10 +38,17 @@ RUN pip install --no-cache-dir audio-separator[cpu]
 # Копируем скомпилированное .NET приложение из первого этапа
 COPY --from=build-env /app .
 
-# Создаем папки для хранения данных, чтобы они не затирались при перезапуске
+# Создаем папки для хранения данных
 RUN mkdir -p instance wwwroot/uploads wwwroot/uploads/backgrounds wwwroot/output Models Fonts
 
-# Открываем порты для веб-сервера (8080 — дефолтный порт в .NET 8+)
+# Создаем папку под модель и копируем файл Kim_Vocal_2.onnx внутрь образа
+RUN mkdir -p /tmp/audio-separator-models
+COPY ./Models/audio_models/Kim_Vocal_2.onnx /tmp/audio-separator-models/Kim_Vocal_2.onnx
+
+# Копируем модель Whisper прямо в рабочую папку /app/Models внутри образа
+COPY ./Models/ggml-medium.bin /app/Models/ggml-medium.bin
+
+# Открываем порты для веб-сервера
 EXPOSE 8080
 EXPOSE 8081
 

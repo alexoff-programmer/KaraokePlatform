@@ -12,15 +12,14 @@ public class AudioProcessor : IAudioProcessor
 {
     private static readonly Regex ProgressRegex = new Regex(@"(\d+)(?:.\d+)?%", RegexOptions.Compiled);
 
-    public void ConvertAndFilterMp3ToWav(string inputPath, string outputPath, Action<int>? onProgress = null)
+    // ИСПРАВЛЕНО: Добавлен параметр instrumentalOutputPath
+    public void ConvertAndFilterMp3ToWav(string inputPath, string outputPath, string instrumentalOutputPath, Action<int>? onProgress = null)
     {
-        // Переносим временную папку в корень диска C, чтобы защититься от багов с кириллицей в путях Пользователя
         string tempOutputDir = Path.Combine(Path.GetTempPath(), "KaraokeTemp", $"sep_{Guid.NewGuid()}");
         Directory.CreateDirectory(tempOutputDir);
 
         try
         {
-            // ЖЕСТКИЙ ФИКС: Явно заставляем выдавать WAV и сохранять в латинский путь
             var arguments = $"\"{inputPath}\" -m Kim_Vocal_2.onnx --output_dir \"{tempOutputDir}\" --output_format WAV";
 
             var startInfo = new ProcessStartInfo
@@ -34,13 +33,11 @@ public class AudioProcessor : IAudioProcessor
 
             using var process = new Process();
             process.StartInfo = startInfo;
-
             var stderrBuilder = new StringBuilder();
 
             process.ErrorDataReceived += (sender, args) =>
             {
                 if (args.Data == null) return;
-
                 stderrBuilder.AppendLine(args.Data);
 
                 if (onProgress != null)
@@ -68,21 +65,28 @@ public class AudioProcessor : IAudioProcessor
             string inputFileNameNoExt = Path.GetFileNameWithoutExtension(inputPath);
             var outputDirInfo = new DirectoryInfo(tempOutputDir);
 
-            // Теперь расширение совпадет на 100%
-            var vocalsFile = outputDirInfo.GetFiles($"*{inputFileNameNoExt}*(Vocals)*.wav")
-                                          .FirstOrDefault();
+            var vocalsFile = outputDirInfo.GetFiles($"*{inputFileNameNoExt}*(Vocals)*.wav").FirstOrDefault();
+            // НОВОЕ: Находим файл инструментала
+            var instrumentalFile = outputDirInfo.GetFiles($"*{inputFileNameNoExt}*(Instrumental)*.wav").FirstOrDefault();
 
             if (vocalsFile == null || !vocalsFile.Exists)
             {
                 throw new FileNotFoundException($"Файл вокала не найден в папке {tempOutputDir}. Лог утилиты: {stderrBuilder}");
             }
+            if (instrumentalFile == null || !instrumentalFile.Exists)
+            {
+                throw new FileNotFoundException($"Файл инструментала (минусовки) не найден в папке {tempOutputDir}. Лог утилиты: {stderrBuilder}");
+            }
+
+            // НОВОЕ: Перемещаем чистую минусовку в её постоянное место (которое потом отдадим в VideoRenderer)
+            if (File.Exists(instrumentalOutputPath)) File.Delete(instrumentalOutputPath);
+            File.Move(instrumentalFile.FullName, instrumentalOutputPath);
 
             // Пережимаем в Моно 16кГц для Whisper
             DownsampleToWhisperFormat(vocalsFile.FullName, outputPath);
         }
         finally
         {
-            // Полная зачистка
             if (Directory.Exists(tempOutputDir))
             {
                 try { Directory.Delete(tempOutputDir, true); } catch { }

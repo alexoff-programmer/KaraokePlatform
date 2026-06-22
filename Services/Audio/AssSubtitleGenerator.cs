@@ -11,12 +11,15 @@ public class AssSubtitleGenerator : ISubtitleGenerator
 {
     private static readonly TimeSpan TimeShift = TimeSpan.FromMilliseconds(200);
 
-    private const double InstrumentSilenceThresholdMs = 1200; // Если впереди тишина от инструментала больше 1.2 секунды, держим строку на экране, чтобы не обрывать ее раньше времени
+    private const double InstrumentSilenceThresholdMs = 1200;
 
     // Настройки аккуратного последовательного отображения без каши
-    private int FadeTimeMs = 0;          // Мягкое появление/исчезновение (четверть секунды)
-    private int FadeBufferMs = 0;        // Железный зазор между блоками субтитров
-    private int MaxHoldAfterSpeechMs = 500; // Сколько удерживать строку, если впереди долгая пауза
+    private int FadeTimeMs = 0;
+    private int FadeBufferMs = 50;        // Небольшой зазор между физическим исчезновением одной строки и появлением другой
+    private int MaxHoldAfterSpeechMs = 500;
+
+    // НОВОЕ: На сколько секунд раньше строка должна появиться на экране для подготовки
+    private static readonly TimeSpan PreRollTime = TimeSpan.FromSeconds(2.0);
 
     public string GenerateKaraokeMarkup(List<WordTimeInfo> words)
     {
@@ -48,10 +51,13 @@ public class AssSubtitleGenerator : ISubtitleGenerator
         sb.AppendLine("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text");
     }
 
-    private List<List<WordTimeInfo>> GroupWordsIntoPhrases(List<WordTimeInfo> words)
+    public List<List<WordTimeInfo>> GroupWordsIntoPhrases(List<WordTimeInfo> words)
     {
         var phrases = new List<List<WordTimeInfo>>();
         var currentPhrase = new List<WordTimeInfo> { words[0] };
+
+        // ИСПРАВЛЕНО: Считаем суммарную длину фразы в символах, чтобы короткие слова не дробились слишком часто
+        int currentPhraseChars = words[0].Text?.Length ?? 0;
 
         for (int i = 1; i < words.Count; i++)
         {
@@ -61,13 +67,23 @@ public class AssSubtitleGenerator : ISubtitleGenerator
             TimeSpan prevEnd = prevWord.End > prevWord.Start ? prevWord.End : prevWord.Start + TimeSpan.FromMilliseconds(200);
             double originalGapMs = (currWord.Start - prevEnd).TotalMilliseconds;
 
-            // Триггер новой строки: пауза > 280мс или лимит в 4 слова
-            if (originalGapMs > 280 || currentPhrase.Count >= 4)
+            // ИСПРАВЛЕНО: Изменили правила переноса. 
+            // 1. Пауза должна быть действительно ощутимой (было 280мс, стало 600мс).
+            // 2. Лимит слов увеличили с 4 до 8, либо если строка набрала приличную длину (> 35 символов).
+            // 3. Если в строке всего 1-2 слова, МЫ НЕ ДЕЛАЕМ перенос, даже если пауза большая (исключение — огромный проигрыш > 2.5 сек).
+            bool isLongPause = originalGapMs > 600;
+            bool isHugeGap = originalGapMs > 2500;
+            bool isLineTooLong = currentPhrase.Count >= 8 || currentPhraseChars > 35;
+
+            if ((isLongPause && currentPhrase.Count >= 3) || isLineTooLong || isHugeGap)
             {
                 phrases.Add(currentPhrase);
                 currentPhrase = new List<WordTimeInfo>();
+                currentPhraseChars = 0;
             }
+
             currentPhrase.Add(currWord);
+            currentPhraseChars += (currWord.Text?.Length ?? 0) + 1; // +1 для пробела
         }
         if (currentPhrase.Count > 0) phrases.Add(currentPhrase);
         return phrases;
@@ -80,7 +96,6 @@ public class AssSubtitleGenerator : ISubtitleGenerator
             var currentPhraseWords = phrases[i];
             var lastWord = currentPhraseWords.Last();
 
-            // Строго следим, чтобы конец текущей фразы не налезал на старт следующей с учетом буфера
             TimeSpan maxAllowedEnd = (i < phrases.Count - 1)
                 ? phrases[i + 1].First().Start - TimeSpan.FromMilliseconds(FadeBufferMs)
                 : lastWord.End + TimeSpan.FromMilliseconds(1200);
@@ -97,14 +112,14 @@ public class AssSubtitleGenerator : ISubtitleGenerator
 
     private void BuildDialogueLines(StringBuilder sb, List<List<WordTimeInfo>> phrases)
     {
+        // Храним конец предыдущей строки, чтобы новая не выскочила раньше времени
+        TimeSpan absoluteMinStart = TimeSpan.Zero;
+
         for (int i = 0; i < phrases.Count; i++)
         {
             var phrase = phrases[i];
 
-            // Старт строго по началу пения (никаких забеганий назад)
-            var lineStart = phrase.First().Start - TimeShift;
-            if (lineStart < TimeSpan.Zero) lineStart = TimeSpan.Zero;
-
+            // 1. Вычисляем фактический конец строки
             TimeSpan lineEnd;
             if (i < phrases.Count - 1)
             {
@@ -112,14 +127,12 @@ public class AssSubtitleGenerator : ISubtitleGenerator
                 var phraseActualEnd = phrase.Last().End - TimeShift;
                 double cleanGap = (nextPhraseStart - phraseActualEnd).TotalMilliseconds;
 
-                // Если впереди длинный музыкальный проигрыш, держим строку не дольше MaxHoldAfterSpeechMs
                 if (cleanGap > InstrumentSilenceThresholdMs)
                 {
                     lineEnd = phraseActualEnd + TimeSpan.FromMilliseconds(MaxHoldAfterSpeechMs);
                 }
                 else
                 {
-                    // Если фразы идут близко, тушим текущую строго до старта следующей за вычетом FadeBuffer
                     lineEnd = nextPhraseStart - TimeSpan.FromMilliseconds(FadeBufferMs);
                 }
             }
@@ -128,13 +141,32 @@ public class AssSubtitleGenerator : ISubtitleGenerator
                 lineEnd = phrase.Last().End - TimeShift + TimeSpan.FromMilliseconds(600);
             }
 
+            // 2. ИСПРАВЛЕНО: Появление заранее (PreRoll)
+            // Пытаемся сдвинуть старт отображения строки назад на PreRollTime (2 секунды)
+            var singingStart = phrase.First().Start - TimeShift;
+            if (singingStart < TimeSpan.Zero) singingStart = TimeSpan.Zero;
+
+            var lineStart = singingStart - PreRollTime;
+
+            // Защита: строка не может появиться раньше, чем исчезла предыдущая + микро зазор
+            if (lineStart < absoluteMinStart)
+            {
+                lineStart = absoluteMinStart;
+            }
+
+            // Если песня только началась или пауза была слишком маленькой, lineStart может догнать singingStart. 
+            // Главное, чтобы старт отображения строки не ушел позже самого пения.
+            if (lineStart > singingStart) lineStart = singingStart;
+
             // Страховка от вырождения таймингов
             if (lineEnd < lineStart) lineEnd = lineStart + TimeSpan.FromMilliseconds(500);
+
+            // Запоминаем текущий физический конец для следующей итерации
+            absoluteMinStart = lineEnd + TimeSpan.FromMilliseconds(FadeBufferMs);
 
             string assStart = FormatTimeSpanForAss(lineStart);
             string assEnd = FormatTimeSpanForAss(lineEnd);
 
-            // Применяем легкий, не ломающий чтение фейд
             var lineBuilder = new StringBuilder($"{{\\fad({FadeTimeMs}, {FadeTimeMs})}}");
             TimeSpan currentTime = lineStart;
 
@@ -155,6 +187,8 @@ public class AssSubtitleGenerator : ISubtitleGenerator
                     shiftedWordEnd += overlap;
                 }
 
+                // Благодаря тому, что мы сдвинули lineStart назад, здесь автоматически
+                // посчитается пауза ожидания перед первым словом фраз и запишется в \kf тег.
                 var pauseDuration = shiftedWordStart - currentTime;
                 if (pauseDuration.TotalMilliseconds > 10)
                 {
@@ -184,7 +218,6 @@ public class AssSubtitleGenerator : ISubtitleGenerator
 
     private string FormatTimeSpanForAss(TimeSpan ts)
     {
-        // Атомарный расчет центисекунд во избежание каскадного переполнения секунд/минут
         long totalCentiseconds = (long)Math.Round(ts.TotalMilliseconds / 10.0);
 
         long cs = totalCentiseconds % 100;

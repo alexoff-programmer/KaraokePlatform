@@ -7,6 +7,6 @@ namespace KaraokePlatform.Services.Audio.Interfaces
 {
     public interface IAudioProcessor
     {
-        void ConvertAndFilterMp3ToWav(string inputPath, string outputPath, Action<int>? onProgress = null);
+        void ConvertAndFilterMp3ToWav(string inputPath, string outputPath, string instrumentalOutputPath, Action<int>? onProgress = null);
     }
 }

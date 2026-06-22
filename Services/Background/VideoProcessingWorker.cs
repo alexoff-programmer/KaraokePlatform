@@ -1,7 +1,12 @@
+using System;
 using System.Diagnostics;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 using KaraokePlatform.Data;
 using KaraokePlatform.Hubs;
 using KaraokePlatform.Services.Audio;
+using KaraokePlatform.Services.Audio.Records;
 using KaraokePlatform.Services.Video;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.SignalR;
@@ -32,119 +37,106 @@ public class VideoProcessingWorker : BackgroundService
         _hubContext = hubContext;
     }
 
+    // 1. Добавь поле и инжект нового менеджера в конструктор воркера:
+    // private readonly TaskCancellationManager _cancellationManager;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("Фоновый воркер обработки видео запущен.");
 
-        // Бесконечно читаем задачи из очереди, пока приложение работает
         await foreach (var taskId in _queueChannel.ReadTasksAsync(stoppingToken))
         {
             _logger.LogInformation($"Получена задача {taskId} из очереди.");
 
-            // Создаем временную область видимости для работы со Scoped-сервисами (БД, Whisper, Рендерер)
             using var scope = _serviceProvider.CreateScope();
             var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var transcriber = scope.ServiceProvider.GetRequiredService<WhisperTranscriber>();
-            var renderer = scope.ServiceProvider.GetRequiredService<VideoRenderer>();
+            var cancellationManager = scope.ServiceProvider.GetRequiredService<TaskCancellationManager>();
             var webHostEnvironment = scope.ServiceProvider.GetRequiredService<IWebHostEnvironment>();
 
-            // Загружаем задачу из базы данных
             var task = await context.KaraokeTasks.FindAsync(new object[] { taskId }, stoppingToken);
             if (task == null) continue;
 
-            // Ищем автора задачи для отправки персональных уведомлений через SignalR
             var user = await context.Users.FindAsync(task.UserId);
             string username = user?.Username ?? string.Empty;
 
+            // 2. РЕГИСТРИРУЕМ ТОКЕН ОТМЕНЫ ДЛЯ ТЕКУЩЕЙ ЗАДАЧИ
+            using var registration = cancellationManager.RegisterTask(task.Id, stoppingToken, out var taskToken);
+
             try
             {
-                // Переводим задачу в статус "В процессе" и сохраняем в БД
+                // Проверяем, не отменили ли задачу, пока она висела в очереди
+                taskToken.ThrowIfCancellationRequested();
+
                 task.Status = TaskStatus.Processing;
                 task.UpdatedAt = DateTime.UtcNow;
-                await context.SaveChangesAsync(stoppingToken);
+                await context.SaveChangesAsync(taskToken); // Используем taskToken
 
                 _logger.LogInformation($"Началась обработка файла: {task.OriginalFileName}");
 
-                // Оповещаем фронтенд о старте (10% прогресса)
                 if (!string.IsNullOrEmpty(username))
                 {
                     await _hubContext.Clients.Group(username)
-                        .SendAsync("UpdateTaskStatus", task.Id.ToString(), "Processing: 10% (Инициализация...)", null, stoppingToken);
+                        .SendAsync("UpdateTaskStatus", task.Id.ToString(), "Processing: 10% (Инициализация...)", null, taskToken);
                 }
 
-                // Собираем полные пути к файлам на сервере
                 var fullAudioPath = Path.Combine(webHostEnvironment.WebRootPath, task.AudioFilePath);
-                var outputFolder = Path.Combine(webHostEnvironment.WebRootPath, "output");
 
-                // Создаем папку output, если её еще нет на диске
-                if (!Directory.Exists(outputFolder)) Directory.CreateDirectory(outputFolder);
+                _logger.LogInformation("Запуск нейросети Whisper для получения текстовых фраз...");
 
-                // Если в задаче есть картинка фона, собираем к ней полный путь. Иначе передаем null (будет черный фон)
-                string? fullBgPath = !string.IsNullOrEmpty(task.BackgroundImagePath)
-                    ? Path.Combine(webHostEnvironment.WebRootPath, task.BackgroundImagePath)
-                    : null;
-
-                _logger.LogInformation("Запуск нейросети Whisper для распознавания текста...");
-
-                // ЭТАП 1: Генерируем караоке-субтитры (.ass) из аудиофайла
-                string assSubtitlesPath = await transcriber.ProcessAudioAsync(
-                    fullAudioPath, outputFolder, task.Language, async (progress) =>
+                // Передаем наш токен во внутренние методы ИИ-сепаратора и Whisper
+                // (Убедись, что внутри ProcessAudioToPhrasesAsync этот токен прокидывается в WaitForExitAsync() или ProcessAsync)
+                var phrases = await transcriber.ProcessAudioToPhrasesAsync(task.Id, fullAudioPath, task.Language, async (progress) =>
+                {
+                    if (!string.IsNullOrEmpty(username))
                     {
-                        // Транслируем текущий процент распознавания текста на фронтенд в реальном времени
-                        if (!string.IsNullOrEmpty(username))
-                        {
-                            string statusText = $"Processing: {progress}% (Распознавание текста...)";
-                            await _hubContext.Clients.Group(username)
-                                .SendAsync("UpdateTaskStatus", task.Id.ToString(), statusText, null, stoppingToken);
-                        }
-                    });
+                        string statusText = $"Processing: {progress}% (Распознавание ИИ...)";
+                        await _hubContext.Clients.Group(username).SendAsync("UpdateTaskStatus", task.Id.ToString(), statusText, null, taskToken);
+                    }
+                });
 
-                _logger.LogInformation($"Субтитры успешно созданы: {assSubtitlesPath}");
+                taskToken.ThrowIfCancellationRequested();
 
-                // Оповещаем фронтенд о переходе к рендерингу видео (60% прогресса)
-                if (!string.IsNullOrEmpty(username))
-                {
-                    await _hubContext.Clients.Group(username)
-                        .SendAsync("UpdateTaskStatus", task.Id.ToString(), "Processing: 60% (Сборка видео...)", null, stoppingToken);
-                }
-
-                // Генерируем уникальное имя для готового видеоролика
-                var videoFileName = $"{Guid.NewGuid()}.mp4";
-                var fullVideoOutputPath = Path.Combine(outputFolder, videoFileName);
-
-                // ЭТАП 2: Запускаем рендеринг через FFmpeg (передаем аудио, субтитры, путь сохранения и фон)
-                await renderer.RenderKaraokeVideoAsync(fullAudioPath, assSubtitlesPath, fullVideoOutputPath, fullBgPath);
-
-                // ЭТАП 3: Фиксируем успешное завершение в базе данных
-                task.Status = TaskStatus.Completed;
-                task.VideoFilePath = Path.Combine("output", videoFileName);
+                task.DetectedLinesJson = System.Text.Json.JsonSerializer.Serialize(phrases);
+                task.Status = TaskStatus.AwaitingReview;
                 task.UpdatedAt = DateTime.UtcNow;
-                await context.SaveChangesAsync(stoppingToken);
+                await context.SaveChangesAsync(taskToken);
 
-                // Отправляем финальное уведомление на фронтенд вместе с веб-ссылкой на готовый MP4
                 if (!string.IsNullOrEmpty(username))
                 {
                     await _hubContext.Clients.Group(username)
-                        .SendAsync("UpdateTaskStatus", task.Id.ToString(), "Completed", task.VideoFilePath.Replace("\\", "/"), stoppingToken);
+                        .SendAsync("UpdateTaskStatus", task.Id.ToString(), "AwaitingReview", null, taskToken);
                 }
 
-                _logger.LogInformation($"Успешно обработано: {task.OriginalFileName}");
+                _logger.LogInformation($"Текст для задачи {task.Id} успешно распознан.");
+
+                cancellationManager.UnregisterTask(task.Id); // Снимаем с учета при успехе
+                continue;
+            }
+            catch (OperationCanceledException)
+            {
+                // Сюда мы прилетим, если пользователь нажал "Удалить" во время обработки
+                _logger.LogWarning($"Обработка задачи {taskId} была принудительно прервана пользователем.");
+
+                // Базу здесь не трогаем, так как бэкенд страницы её уже удалил
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Ошибка при обработке задачи {taskId}");
 
-                // Если произошел сбой — сохраняем ошибку в БД и меняем статус задачи
-                task.Status = TaskStatus.Failed;
-                task.ErrorMessage = ex.Message;
-                task.UpdatedAt = DateTime.UtcNow;
-                await context.SaveChangesAsync(stoppingToken);
-
-                // Отправляем статус "Failed" на фронтенд, чтобы интерфейс убрал спиннер загрузки
-                if (!string.IsNullOrEmpty(username))
+                // Фикс: если база упала, но запись не была удалена юзером — меняем статус на Failed
+                var checkTask = await context.KaraokeTasks.AsNoTracking().FirstOrDefaultAsync(t => t.Id == taskId, stoppingToken);
+                if (checkTask != null)
                 {
-                    await _hubContext.Clients.Group(username)
-                        .SendAsync("UpdateTaskStatus", task.Id.ToString(), "Failed", null, stoppingToken);
+                    task.Status = TaskStatus.Failed;
+                    task.ErrorMessage = ex.Message;
+                    task.UpdatedAt = DateTime.UtcNow;
+                    await context.SaveChangesAsync(stoppingToken);
+
+                    if (!string.IsNullOrEmpty(username))
+                    {
+                        await _hubContext.Clients.Group(username).SendAsync("UpdateTaskStatus", task.Id.ToString(), "Failed", null, stoppingToken);
+                    }
                 }
             }
         }
