@@ -25,6 +25,7 @@ bld/
 Models/
 instance/
 wwwroot/
+*.tar
 
 # .NET Core
 project.lock.json
@@ -55,3 +56,4 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+*.tar
