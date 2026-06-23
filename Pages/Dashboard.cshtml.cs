@@ -215,17 +215,29 @@ public class DashboardModel : PageModel
             return RedirectToPage();
         }
 
-        // Если задача сейчас выполняется — тушим её процесс прямо на лету!
-        if (task.Status == TaskStatus.Processing)
+        // ИСПРАВЛЕНИЕ: Отменяем, если задача выполняется ИЛИ находится в очереди сборки
+        if (task.Status == TaskStatus.Processing || task.Status == TaskStatus.ReadyToRender)
         {
             _cancellationManager.CancelTask(task.Id);
 
-            // Даем процессам до 2 секунд на экстренное завершение и освобождение файлов
+            // Умное ожидание освобождения задачи воркером
             int attempts = 0;
             while (attempts < 20)
             {
-                // Проверяем, активны ли еще процессы (воркер снимет задачу с учета при отмене)
                 await Task.Delay(100);
+
+                // Проверяем через контекст (или NoTracking), изменил ли воркер статус на Failed/отменил ли
+                var currentStatus = await _context.KaraokeTasks
+                    .AsNoTracking()
+                    .Where(t => t.Id == taskId)
+                    .Select(t => t.Status)
+                    .FirstOrDefaultAsync();
+
+                // Если воркер уже перехватил отмену и завершил работу с задачей — выходим досрочно!
+                if (currentStatus == TaskStatus.Failed || currentStatus == TaskStatus.Completed)
+                {
+                    break;
+                }
                 attempts++;
             }
         }
@@ -237,15 +249,15 @@ public class DashboardModel : PageModel
             {
                 var cleanAudioPath = task.AudioFilePath.TrimStart('\\', '/');
                 var fullAudioPath = Path.Combine(_environment.WebRootPath, cleanAudioPath);
-                if (System.IO.File.Exists(fullAudioPath)) System.IO.File.Delete(fullAudioPath);
+                DeleteFileWithRetry(fullAudioPath);
             }
 
-            // 2. Удаляем готовый видеофайл (.mp4), если он уже был создан
+            // 2. Удаляем готовый видеофайл (.mp4)
             if (!string.IsNullOrEmpty(task.VideoFilePath))
             {
                 var cleanVideoPath = task.VideoFilePath.TrimStart('\\', '/');
                 var fullVideoPath = Path.Combine(_environment.WebRootPath, cleanVideoPath);
-                if (System.IO.File.Exists(fullVideoPath)) System.IO.File.Delete(fullVideoPath);
+                DeleteFileWithRetry(fullVideoPath);
             }
 
             // 3. Удаляем фоновое изображение
@@ -253,32 +265,22 @@ public class DashboardModel : PageModel
             {
                 var cleanBgPath = task.BackgroundImagePath.TrimStart('\\', '/');
                 var fullBgPath = Path.Combine(_environment.WebRootPath, cleanBgPath);
-                if (System.IO.File.Exists(fullBgPath)) System.IO.File.Delete(fullBgPath);
+                DeleteFileWithRetry(fullBgPath);
             }
 
-            // 4. Очистка абсолютно всех временных файлов задачи (титры .ass, минусовки .wav)
+            // 4. Очистка временных файлов (.ass, .wav минусовки)
             var outputFolder = Path.Combine(_environment.WebRootPath, "output");
             if (Directory.Exists(outputFolder))
             {
                 var directoryInfo = new DirectoryInfo(outputFolder);
-
-                // Находит любые файлы, будь то "guid_instrumental.wav" или "guid.ass", 
-                // если в их имени есть наш taskId
                 var taskFiles = directoryInfo.GetFiles($"*{task.Id}*");
                 foreach (var file in taskFiles)
                 {
-                    try
-                    {
-                        System.IO.File.Delete(file.FullName);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning($"Не удалось удалить временный файл {file.Name}: {ex.Message}");
-                    }
+                    DeleteFileWithRetry(file.FullName);
                 }
             }
 
-            // Удаляем запись из базы данных
+            // Удаляем запись из базы данных только когда подчистили хвосты
             _context.KaraokeTasks.Remove(task);
             await _context.SaveChangesAsync();
 
@@ -286,10 +288,35 @@ public class DashboardModel : PageModel
         }
         catch (Exception ex)
         {
-            // Оставляем подробный вывод, чтобы в случае чего сразу увидеть "Access Denied" (блокировку процесса)
-            TempData["ErrorMessage"] = $"Запись удалена, но возникли проблемы с файлами: {ex.Message}";
+            _logger.LogError(ex, $"Ошибка при полном удалении задачи {taskId}");
+            TempData["ErrorMessage"] = $"Не удалось полностью удалить задачу. Ошибка доступа к файлам: {ex.Message}";
         }
 
         return RedirectToPage();
+    }
+
+    // Хелпер для удаления "капризных" файлов, которые ОС может закрывать с задержкой в пару миллисекунд
+    private void DeleteFileWithRetry(string filePath)
+    {
+        if (!System.IO.File.Exists(filePath)) return;
+
+        for (int i = 0; i < 3; i++)
+        {
+            try
+            {
+                System.IO.File.Delete(filePath);
+                return; // Успешно удалено
+            }
+            catch (IOException)
+            {
+                // Если файл занят — чуть-чуть ждем и пробуем снова
+                System.Threading.Thread.Sleep(200);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"Не удалось удалить файл {filePath}: {ex.Message}");
+                break;
+            }
+        }
     }
 }
