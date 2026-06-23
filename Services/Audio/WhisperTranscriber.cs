@@ -1,9 +1,10 @@
 using System;
 using System.IO;
-using System.Text;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using KaraokePlatform.Services.Audio.Interfaces;
 using KaraokePlatform.Services.Audio.Records;
+using Microsoft.AspNetCore.Hosting; // Добавлено
 
 namespace KaraokePlatform.Services.Audio;
 
@@ -12,38 +13,33 @@ public class WhisperTranscriber
     private readonly IAudioProcessor _audioProcessor;
     private readonly IAudioSilenceAnalyzer _silenceAnalyzer;
     private readonly ISpeechRecognizer _speechRecognizer;
-    private readonly ISubtitleGenerator _subtitleGenerator;
+    private readonly IWebHostEnvironment _environment; // Инжектим окружение
 
     public WhisperTranscriber(
         IAudioProcessor audioProcessor,
         IAudioSilenceAnalyzer silenceAnalyzer,
         ISpeechRecognizer speechRecognizer,
-        ISubtitleGenerator subtitleGenerator)
+        IWebHostEnvironment environment) // Добавлено в DI
     {
         _audioProcessor = audioProcessor;
         _silenceAnalyzer = silenceAnalyzer;
         _speechRecognizer = speechRecognizer;
-        _subtitleGenerator = subtitleGenerator;
+        _environment = environment;
     }
 
-    // ИСПРАВЛЕНО: Теперь принимает bool removeVocal и возвращает объект TranscriberResult
-    // Измени возвращаемый тип на список фраз (List<List<WordTimeInfo>>)
     public async Task<List<List<WordTimeInfo>>> ProcessAudioToPhrasesAsync(
-    Guid taskId,
-    string mp3FilePath,
-    string language,
-    Action<int> onProgress)
+        Guid taskId,
+        string mp3FilePath,
+        string language,
+        Action<int> onProgress)
     {
-        // Кросплатформенный temp
-        string tempRoot = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "temp");
+        // Используем строго WebRootPath для временного вокала (чтобы Docker не путал контекст)
+        string tempRoot = Path.Combine(_environment.WebRootPath, "temp");
         Directory.CreateDirectory(tempRoot);
-
-        // Использовали taskId для входящего вокала
         string whisperVavPath = Path.Combine(tempRoot, $"{taskId}_whisper.wav");
 
-        // ЖЕСТКИЙ ФИКС: Для минусовки в папке output ТАКЖЕ используем taskId вместо Guid!
-        // Теперь имя файла будет вида: "wwwroot/output/ИД_ЗАДАЧИ_instrumental.wav"
-        string outputFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wwwroot", "output");
+        // ИСПРАВЛЕНО: Теперь путь к output железно берется из WebRootPath, как и на страницах Razor Pages
+        string outputFolder = Path.Combine(_environment.WebRootPath, "output");
         Directory.CreateDirectory(outputFolder);
         string instrumentalWavPath = Path.Combine(outputFolder, $"{taskId}_instrumental.wav");
 
@@ -60,7 +56,6 @@ public class WhisperTranscriber
                 p => onProgress.Invoke(25 + (p * 25 / 100)));
 
             var generator = new AssSubtitleGenerator();
-            // Делаем метод GroupWordsIntoPhrases публичным в AssSubtitleGenerator
             var phrases = generator.GroupWordsIntoPhrases(words);
 
             return phrases;

@@ -225,15 +225,15 @@
 
                                         if (!container) {
                                             statusCell.innerHTML = `
-                                                    <div class="processing-container">
-                                                    <div class="d-flex align-items-center text-warning small mb-1 text-nowrap">
-                                                    <div class="spinner-border spinner-border-sm me-2 flex-shrink-0" role="status"></div>
-                                                    <span class="processing-text">Обработка...</span>
-                                                    </div>
-                                                    <div class="progress" style="height: 4px; background-color: #f0f0f0;">
-                                                    <div class="progress-bar progress-bar-striped progress-bar-animated bg-warning" role="progressbar" style="width: 10%"></div>
-                                                    </div>
-                                                    </div>`;
+                                                                                                                                                                    <div class="processing-container">
+                                                                                                                                                                    <div class="d-flex align-items-center text-warning small mb-1 text-nowrap">
+                                                                                                                                                                    <div class="spinner-border spinner-border-sm me-2 flex-shrink-0" role="status"></div>
+                                                                                                                                                                    <span class="processing-text">Обработка...</span>
+                                                                                                                                                                    </div>
+                                                                                                                                                                    <div class="progress" style="height: 4px; background-color: #f0f0f0;">
+                                                                                                                                                                    <div class="progress-bar progress-bar-striped progress-bar-animated bg-warning" role="progressbar" style="width: 10%"></div>
+                                                                                                                                                                    </div>
+                                                                                                                                                                    </div>`;
                                             container = statusCell.querySelector(".processing-container");
                                         }
 
@@ -253,23 +253,27 @@
                                         if (progressBar) progressBar.style.width = percent + "%";
 
                                         actionCell.innerHTML = `
-                                                <div class="d-flex justify-content-end align-items-center gap-2">
-                                                    <form method="post" action="/Dashboard?handler=Delete&taskId=${taskId}" onsubmit="return confirm('Прервать обработку и безвозвратно удалить все файлы?');" class="d-inline m-0">
-                                                        <button type="submit" class="btn btn-sm btn-outline-danger rounded-3"><i class="bi bi-trash"></i></button>
-                                                    </form>
-                                                </div>`;
+                                                                                                                                                                <div class="d-flex justify-content-end align-items-center gap-2">
+                                                                                                                                                                    <form method="post" action="/Dashboard?handler=Delete&taskId=${taskId}" onsubmit="return confirm('Прервать обработку и безвозвратно удалить все файлы?');" class="d-inline m-0">
+                                                                                                                                                                        <button type="submit" class="btn btn-sm btn-outline-danger rounded-3"><i class="bi bi-trash"></i></button>
+                                                                                                                                                                    </form>
+                                                                                                                                                                </div>`;
                                     }
                                     else if (status === "AwaitingReview") {
                                         statusCell.innerHTML = `<span class="text-warning small text-nowrap"><i class="bi bi-pencil-square me-1"></i>Ожидает проверки</span>`;
                                         actionCell.innerHTML = `
-                                                <div class="d-flex justify-content-end align-items-center gap-2">
-                                                    <a href="/EditSubtitles?taskId=${taskId}" class="btn btn-sm btn-warning text-dark fw-bold rounded-3 px-3">
-                                                        <i class="bi bi-keyboard me-1"></i>Текст
-                                                    </a>
-                                                    <form method="post" action="/Dashboard?handler=Delete&taskId=${taskId}" onsubmit="return confirm('Вы уверены, что хотите удалить эту генерацию?');" class="d-inline m-0">
-                                                        <button type="submit" class="btn btn-sm btn-outline-danger rounded-3"><i class="bi bi-trash"></i></button>
-                                                    </form>
-                                                </div>`;
+                                                                                                                                                                <div class="d-flex justify-content-end align-items-center gap-2">
+                                                                                                                                                                    <a href="/EditSubtitles?taskId=${taskId}" class="btn btn-sm btn-warning text-dark fw-bold rounded-3 px-3">
+                                                                                                                                                                        <i class="bi bi-keyboard me-1"></i>Текст
+                                                                                                                                                                    </a>
+                                                                                                                                                                    <form method="post" action="/Dashboard?handler=Delete&taskId=${taskId}" onsubmit="return confirm('Вы уверены, что хотите удалить эту генерацию?');" class="d-inline m-0">
+                                                                                                                                                                        <button type="submit" class="btn btn-sm btn-outline-danger rounded-3"><i class="bi bi-trash"></i></button>
+                                                                                                                                                                    </form>
+                                                                                                                                                                </div>`;
+                                    }
+                                    else if (status === "ReadyToRender") {
+                                        statusBadge.innerText = "В очереди на сборку видео...";
+                                        statusBadge.className = "badge bg-info text-dark animate-pulse";
                                     }
                                     else if (status === "Completed") {
                                         statusCell.innerHTML = `<span class="text-success small"><i class="bi bi-check-circle-fill me-1"></i>Готово</span>`;
@@ -282,14 +286,14 @@
                                         }
 
                                         actionCell.innerHTML = `
-                                                <div class="d-flex justify-content-end align-items-center gap-2">
-                                                    <a href="/${videoUrl}" class="btn btn-sm btn-outline-success rounded-3 px-3" download="${downloadName}">
-                                                        <i class="bi bi-download me-1"></i>MP4
-                                                    </a>
-                                                    <form method="post" action="/Dashboard?handler=Delete&taskId=${taskId}" onsubmit="return confirm('Вы уверены, что хотите удалить эту генерацию?');" class="d-inline m-0">
-                                                        <button type="submit" class="btn btn-sm btn-outline-danger rounded-3"><i class="bi bi-trash"></i></button>
-                                                    </form>
-                                                </div>`;
+                                                                                                                                                                <div class="d-flex justify-content-end align-items-center gap-2">
+                                                                                                                                                                    <a href="/${videoUrl}" class="btn btn-sm btn-outline-success rounded-3 px-3" download="${downloadName}">
+                                                                                                                                                                        <i class="bi bi-download me-1"></i>MP4
+                                                                                                                                                                    </a>
+                                                                                                                                                                    <form method="post" action="/Dashboard?handler=Delete&taskId=${taskId}" onsubmit="return confirm('Вы уверены, что хотите удалить эту генерацию?');" class="d-inline m-0">
+                                                                                                                                                                        <button type="submit" class="btn btn-sm btn-outline-danger rounded-3"><i class="bi bi-trash"></i></button>
+                                                                                                                                                                    </form>
+                                                                                                                                                                </div>`;
 
                                         row.classList.add("table-success");
                                         setTimeout(() => row.classList.remove("table-success"), 2500);
@@ -298,12 +302,12 @@
                                         statusCell.innerHTML = `<span class="text-danger small"><i class="bi bi-exclamation-triangle-fill me-1"></i>Ошибка</span>`;
 
                                         actionCell.innerHTML = `
-                                                <div class="d-flex justify-content-end align-items-center gap-2">
-                                                    <button class="btn btn-sm btn-light rounded-3 text-muted" disabled><i class="bi bi-dash-lg"></i></button>
-                                                    <form method="post" action="/Dashboard?handler=Delete&taskId=${taskId}" onsubmit="return confirm('Вы уверены, что хотите удалить эту генерацию?');" class="d-inline m-0">
-                                                        <button type="submit" class="btn btn-sm btn-outline-danger rounded-3"><i class="bi bi-trash"></i></button>
-                                                    </form>
-                                                </div>`;
+                                                                                                                                                                <div class="d-flex justify-content-end align-items-center gap-2">
+                                                                                                                                                                    <button class="btn btn-sm btn-light rounded-3 text-muted" disabled><i class="bi bi-dash-lg"></i></button>
+                                                                                                                                                                    <form method="post" action="/Dashboard?handler=Delete&taskId=${taskId}" onsubmit="return confirm('Вы уверены, что хотите удалить эту генерацию?');" class="d-inline m-0">
+                                                                                                                                                                        <button type="submit" class="btn btn-sm btn-outline-danger rounded-3"><i class="bi bi-trash"></i></button>
+                                                                                                                                                                    </form>
+                                                                                                                                                                </div>`;
                                     }
                                 });
 

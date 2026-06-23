@@ -15,6 +15,9 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.EntityFrameworkCore;
+using KaraokePlatform.Services.Background;
+using KaraokePlatform.Hubs;
+using Microsoft.AspNetCore.SignalR;
 
 namespace KaraokePlatform.Pages;
 
@@ -25,13 +28,15 @@ public class EditSubtitlesModel : PageModel
     private readonly IWebHostEnvironment _environment;
     private readonly ISubtitleGenerator _subtitleGenerator;
     private readonly VideoRenderer _videoRenderer;
+    private readonly QueueChannel _queueChannel;
 
-    public EditSubtitlesModel(AppDbContext context, IWebHostEnvironment environment, ISubtitleGenerator subtitleGenerator, VideoRenderer videoRenderer)
+    public EditSubtitlesModel(AppDbContext context, IWebHostEnvironment environment, ISubtitleGenerator subtitleGenerator, VideoRenderer videoRenderer, QueueChannel queueChannel)
     {
         _context = context;
         _environment = environment;
         _subtitleGenerator = subtitleGenerator;
         _videoRenderer = videoRenderer;
+        _queueChannel = queueChannel;
     }
 
     [BindProperty]
@@ -72,7 +77,6 @@ public class EditSubtitlesModel : PageModel
         var task = await _context.KaraokeTasks.FirstOrDefaultAsync(t => t.Id == TaskId);
         if (task == null) return RedirectToPage("/Dashboard");
 
-        // Фикс CS8602: Защита от null
         var originalPhrases = JsonSerializer.Deserialize<List<List<WordTimeInfo>>>(task.DetectedLinesJson ?? "[]") ?? new();
 
         if (originalPhrases.Count != EditedLines.Count)
@@ -81,14 +85,13 @@ public class EditSubtitlesModel : PageModel
             return Page();
         }
 
+        // 1. Пересчитываем тайминги (этот блок без изменений)
         for (int i = 0; i < originalPhrases.Count; i++)
         {
             var oldPhraseWords = originalPhrases[i];
             var newTextLine = EditedLines[i]?.Trim() ?? string.Empty;
-
             var newWords = newTextLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
-            // Фикс CS8602: проверяем oldPhraseWords на null и на пустоту перед вызовом .First()/.Last()
             if (newWords.Length == 0 || oldPhraseWords == null || oldPhraseWords.Count == 0) continue;
 
             TimeSpan phraseStart = oldPhraseWords.First().Start;
@@ -96,7 +99,7 @@ public class EditSubtitlesModel : PageModel
             double totalDurationMs = (phraseEnd - phraseStart).TotalMilliseconds;
 
             double totalChars = newWords.Sum(w => w.Length);
-            if (totalChars == 0) totalChars = 1; // Защита от деления на ноль, если строка состоит из пробелов
+            if (totalChars == 0) totalChars = 1;
 
             var redistributedWords = new List<WordTimeInfo>();
             TimeSpan currentTrackTime = phraseStart;
@@ -121,53 +124,36 @@ public class EditSubtitlesModel : PageModel
 
         var finalWordsList = originalPhrases.Where(p => p != null).SelectMany(p => p).ToList();
 
+        // 2. Генерируем чистовые субтитры .ass
         var outputFolder = Path.Combine(_environment.WebRootPath, "output");
-        var assFileName = $"{task.Id}.ass"; // Привязано к task.Id
+        var assFileName = $"{task.Id}.ass";
         var assOutputPath = Path.Combine(outputFolder, assFileName);
 
         string assContent = _subtitleGenerator.GenerateKaraokeMarkup(finalWordsList);
         await System.IO.File.WriteAllTextAsync(assOutputPath, assContent, Encoding.UTF8);
 
-        var videoFileName = $"{Guid.NewGuid()}.mp4";
-        var fullVideoOutputPath = Path.Combine(outputFolder, videoFileName);
+        // 3. Обновляем JSON фраз в БД, чтобы зафиксировать правки текста
+        task.DetectedLinesJson = JsonSerializer.Serialize(originalPhrases);
 
-        // ИСПРАВЛЕНО: Умный выбор аудиодорожки для финального рендеринга видео
-        string fullAudioPath = Path.Combine(_environment.WebRootPath, task.AudioFilePath);
-        string expectedInstrumentalPath = Path.Combine(outputFolder, $"{task.Id}_instrumental.wav");
-
-        // Если в задаче стоит RemoveVocal и файл минусовки физически существует на диске — берем его!
-        if (task.RemoveVocal && System.IO.File.Exists(expectedInstrumentalPath))
-        {
-            fullAudioPath = expectedInstrumentalPath;
-        }
-
-        string? fullBgPath = !string.IsNullOrEmpty(task.BackgroundImagePath) ? Path.Combine(_environment.WebRootPath, task.BackgroundImagePath) : null;
-
-        task.Status = KaraokeTaskStatus.Processing;
-        await _context.SaveChangesAsync();
-
-        try
-        {
-            await _videoRenderer.RenderKaraokeVideoAsync(fullAudioPath, assOutputPath, fullVideoOutputPath, fullBgPath);
-
-            task.Status = KaraokeTaskStatus.Completed;
-            task.VideoFilePath = Path.Combine("output", videoFileName);
-
-            // ИСПРАВЛЕНО: Раз уж видео успешно собралось с минусовкой, 
-            // тяжелый wav-файл минусовки можно сразу удалить, чтобы не забивать сервер!
-            if (task.RemoveVocal && System.IO.File.Exists(expectedInstrumentalPath))
-            {
-                try { System.IO.File.Delete(expectedInstrumentalPath); } catch { }
-            }
-        }
-        catch (Exception ex)
-        {
-            task.Status = KaraokeTaskStatus.Failed;
-            task.ErrorMessage = $"Ошибка постобработки: {ex.Message}";
-        }
-
+        // ЖЕСТКИЙ ФИКС: Вместо ручного рендеринга переводим задачу в статус рендеринга 
+        // и отправляем обратно в фоновую очередь!
+        task.Status = KaraokeTaskStatus.ReadyToRender;
         task.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
+
+        // Добавляем ID задачи в QueueChannel, чтобы воркер проснулся и начал рендерить видео
+        // (Для этого инжектируй QueueChannel _queueChannel через конструктор EditSubtitlesModel)
+        await _queueChannel.AddTaskAsync(task.Id);
+
+        var user = await _context.Users.FindAsync(task.UserId);
+        string username = user?.Username ?? string.Empty;
+
+        if (!string.IsNullOrEmpty(username))
+        {
+            var hubContext = HttpContext.RequestServices.GetRequiredService<IHubContext<NotificationHub>>();
+            await hubContext.Clients.Group(username)
+                .SendAsync("UpdateTaskStatus", task.Id.ToString(), "ReadyToRender", null);
+        }
 
         return RedirectToPage("/Dashboard");
     }

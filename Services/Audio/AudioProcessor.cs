@@ -45,7 +45,7 @@ public class AudioProcessor : IAudioProcessor
                     var match = ProgressRegex.Match(args.Data);
                     if (match.Success && int.TryParse(match.Groups[1].Value, out int percent))
                     {
-                        int overallPercent = (percent * 25) / 100;
+                        int overallPercent = 10 + (percent * 15) / 100;
                         onProgress.Invoke(overallPercent);
                     }
                 }
