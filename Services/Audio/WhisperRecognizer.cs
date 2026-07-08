@@ -1,27 +1,51 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Net.Http;
-using System.Net.Http.Json;
 using System.Threading.Tasks;
-using System.Text.RegularExpressions;
 using KaraokePlatform.Services.Audio.Interfaces;
 using KaraokePlatform.Services.Audio.Records;
 using KaraokePlatform.Settings;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Options;
+using Whisper.net;
+using Whisper.net.Wave;
 
 namespace KaraokePlatform.Services.Audio;
 
 public class WhisperRecognizer : ISpeechRecognizer
 {
-    private readonly HttpClient _httpClient;
-    private readonly string _serviceUrl;
+    private readonly string _modelPath;
+    private readonly MmsForceAligner _forceAligner;
+    private WhisperFactory? _factory;
+    private readonly object _lock = new object();
 
-    public WhisperRecognizer(HttpClient httpClient, IOptions<WhisperSettings> settings)
+    public WhisperRecognizer(
+        IOptions<WhisperSettings> settings, 
+        IWebHostEnvironment environment,
+        MmsForceAligner forceAligner)
     {
-        _httpClient = httpClient;
-        // Предполагается, что в настройках теперь лежит URL микросервиса (например, http://transcription-service:8000)
-        _serviceUrl = settings.Value.ModelPath;
+        var path = settings.Value.ModelPath;
+        _modelPath = Path.IsPathRooted(path) ? path : Path.Combine(environment.ContentRootPath, path);
+        _forceAligner = forceAligner;
+    }
+
+    private WhisperFactory GetFactory()
+    {
+        if (_factory == null)
+        {
+            lock (_lock)
+            {
+                if (_factory == null)
+                {
+                    if (!File.Exists(_modelPath))
+                    {
+                        throw new FileNotFoundException($"Whisper модель не найдена по пути {_modelPath}");
+                    }
+                    _factory = WhisperFactory.FromPath(_modelPath);
+                }
+            }
+        }
+        return _factory;
     }
 
     public async Task<List<WordTimeInfo>> TranscribeAndMergeTokensAsync(
@@ -29,90 +53,92 @@ public class WhisperRecognizer : ISpeechRecognizer
         string language,
         Action<int> onProgress)
     {
-        var allWords = new List<WordTimeInfo>();
-
         if (!File.Exists(wavPath))
             throw new FileNotFoundException("Аудиофайл для транскрибации не найден", wavPath);
 
-        onProgress?.Invoke(10); // Начало отправки
+        onProgress?.Invoke(10); // Начало
 
-        HttpResponseMessage? response = null;
-        int maxRetries = 12; // Ждем до 60 секунд (12 попыток по 5 сек)
-        int delaySeconds = 5;
+        // Загружаем фабрику модели
+        var factory = GetFactory();
+        
+        // Создаем процессор Whisper.net
+        // WithConditionOnPreviousText(false) спасает от затыкания на рэпе!
+        using var processor = factory.CreateBuilder()
+            .WithLanguage(language)
+            .WithNoContext()
+            .Build();
 
-        for (int attempt = 1; attempt <= maxRetries; attempt++)
+        onProgress?.Invoke(30);
+
+        // Читаем все сэмплы из WAV-файла (требуется 16kHz, 16-bit, mono)
+        float[] allSamples;
+        using (var fileStream = File.OpenRead(wavPath))
         {
-            try
+            var waveParser = new WaveParser(fileStream);
+            allSamples = await waveParser.GetAvgSamplesAsync();
+        }
+
+        onProgress?.Invoke(50);
+
+        var alignedWords = new List<WordTimeInfo>();
+
+        // Запускаем распознавание сегментов Whisper.net
+        using var wavStream = File.OpenRead(wavPath);
+        
+        var segments = new List<(string Text, TimeSpan Start, TimeSpan End)>();
+        await foreach (var segment in processor.ProcessAsync(wavStream))
+        {
+            if (!string.IsNullOrWhiteSpace(segment.Text))
             {
-                // Создаем контент при КАЖДОЙ попытке заново, чтобы стримы не были закрыты
-                using var attemptContent = new MultipartFormDataContent();
-                using var fileStream = File.OpenRead(wavPath);
-                using var streamContent = new StreamContent(fileStream);
-
-                attemptContent.Add(streamContent, "file", Path.GetFileName(wavPath));
-                attemptContent.Add(new StringContent(language), "language");
-
-                if (attempt == 1)
-                {
-                    onProgress?.Invoke(30); // Файл передан в поток запроса при первой попытке
-                }
-
-                // Пытаемся отправить запрос
-                response = await _httpClient.PostAsync($"{_serviceUrl.TrimEnd('/')}/transcribe", attemptContent);
-                break; // Успешное подключение, выходим из цикла ретраев
+                segments.Add((segment.Text, segment.Start, segment.End));
             }
-            catch (HttpRequestException) when (attempt < maxRetries)
+        }
+
+        onProgress?.Invoke(75);
+
+        // Производим пофразовое выравнивание с помощью ONNX Force Aligner
+        for (int i = 0; i < segments.Count; i++)
+        {
+            var segment = segments[i];
+
+            // Нарезаем сэмплы вокала для данного сегмента
+            int startSample = (int)(segment.Start.TotalSeconds * 16000);
+            int endSample = (int)(segment.End.TotalSeconds * 16000);
+
+            if (startSample < 0) startSample = 0;
+            if (endSample > allSamples.Length) endSample = allSamples.Length;
+            if (startSample >= endSample) continue;
+
+            int sampleCount = endSample - startSample;
+            var segmentSamples = new float[sampleCount];
+            Array.Copy(allSamples, startSample, segmentSamples, 0, sampleCount);
+
+            // Выравниваем слова внутри сегмента
+            var segmentWords = await _forceAligner.AlignAudioAsync(segmentSamples, segment.Text, language);
+
+            // Корректируем смещение времени относительно начала песни
+            foreach (var w in segmentWords)
             {
-                // Сервис еще не запустился, подождем и попробуем снова
-                await Task.Delay(TimeSpan.FromSeconds(delaySeconds));
-            }
-        }
+                var cleanWordText = w.Text.Trim('.', ',', '!', '?', ';', ':', '"', '\'', '`', '(', ')', '[', ']', '{', '}', '_', '*', '…', '-');
+                if (string.IsNullOrWhiteSpace(cleanWordText)) continue;
 
-        if (response == null)
-        {
-            throw new Exception("Не удалось подключиться к микросервису WhisperX: соединение отвергнуто. Возможно, сервис еще не запустился.");
-        }
+                // Нормализуем ё -> е
+                cleanWordText = cleanWordText.Replace("ё", "е").Replace("Ё", "Е");
 
-        if (!response.IsSuccessStatusCode)
-        {
-            var errorMsg = await response.Content.ReadAsStringAsync();
-            throw new Exception($"Ошибка микросервиса WhisperX: {response.StatusCode} - {errorMsg}");
-        }
-
-        onProgress?.Invoke(80); // Сервер обработал, парсим ответ
-
-        var result = await response.Content.ReadFromJsonAsync<WhisperXResponse>();
-
-        if (result?.Words != null)
-        {
-            foreach (var w in result.Words)
-            {
-                string wordText = w.Word ?? string.Empty;
-
-                // Глубокая очистка: удаляем знаки препинания по краям, сохраняя внутренние одиночные дефисы (например, "рэп-батл")
-                string cleanText = wordText.Trim('.', ',', '!', '?', ';', ':', '"', '\'', '`', '(', ')', '[', ']', '{', '}', '_', '*', '…', '-');
-
-                // Нормализуем множественные дефисы и точки внутри слова
-                cleanText = Regex.Replace(cleanText, @"-{2,}", "-");
-                cleanText = Regex.Replace(cleanText, @"\.{2,}", "");
-
-                // Заменяем "ё" на "е"
-                cleanText = cleanText.Replace("ё", "е").Replace("Ё", "Е");
-
-                // Если слово полностью состояло из знаков препинания, пропускаем его
-                if (string.IsNullOrWhiteSpace(cleanText))
-                    continue;
-
-                allWords.Add(new WordTimeInfo
+                alignedWords.Add(new WordTimeInfo
                 {
-                    Text = cleanText,
-                    Start = TimeSpan.FromMilliseconds(w.StartMs),
-                    End = TimeSpan.FromMilliseconds(w.EndMs)
+                    Text = cleanWordText,
+                    Start = segment.Start.Add(w.Start),
+                    End = segment.Start.Add(w.End)
                 });
             }
+
+            // Обновляем прогресс выравнивания
+            int currentProgress = 75 + (i * 20 / segments.Count);
+            onProgress?.Invoke(currentProgress);
         }
 
         onProgress?.Invoke(100);
-        return allWords;
+        return alignedWords;
     }
 }

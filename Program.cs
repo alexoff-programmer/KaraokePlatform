@@ -34,15 +34,11 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
 // Регистрация бизнес-сервиса
 builder.Services.AddScoped<UserService>();
 
-builder.Services.AddHttpClient<ISpeechRecognizer, WhisperRecognizer>(client =>
-{
-    client.Timeout = TimeSpan.FromMinutes(20);
-});
-
 // РЕГИСТРАЦИЯ СЕРВИСОВ ДЛЯ ОБРАБОТКИ АУДИО
 builder.Services.Configure<WhisperSettings>(builder.Configuration.GetSection("WhisperSettings"));
 builder.Services.AddScoped<IAudioProcessor, AudioProcessor>();
 builder.Services.AddScoped<ISpeechRecognizer, WhisperRecognizer>();
+builder.Services.AddScoped<MmsForceAligner>();
 builder.Services.AddScoped<ISubtitleGenerator, AssSubtitleGenerator>();
 builder.Services.AddScoped<WhisperTranscriber>();
 

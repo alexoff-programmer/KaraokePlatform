@@ -48,7 +48,8 @@ public class AssSubtitleGenerator : ISubtitleGenerator
         sb.AppendLine();
         sb.AppendLine("[V4+ Styles]");
         sb.AppendLine("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding");
-        sb.AppendLine("Style: KaraokeStyle,Montserrat,90,&H00FFFFFF,&H0000FFFF,&H00000000,&H00000000,-1,0,0,0,100,100,2,0,1,2,0,5,100,100,0,1");
+        // Изменен размер шрифта с 90 до 68 для размещения двух строк по 40 символов
+        sb.AppendLine("Style: KaraokeStyle,Montserrat,68,&H00FFFFFF,&H0000FFFF,&H00000000,&H00000000,-1,0,0,0,100,100,2,0,1,2,0,5,100,100,0,1");
         sb.AppendLine();
         sb.AppendLine("[Events]");
         sb.AppendLine("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text");
@@ -59,53 +60,108 @@ public class AssSubtitleGenerator : ISubtitleGenerator
         var phrases = new List<List<WordTimeInfo>>();
         if (words == null || words.Count == 0) return phrases;
 
-        // Создаем чистый список для первой фразы
-        var currentPhrase = new List<WordTimeInfo>();
-        int currentPhraseChars = 0;
+        // Внедряем защитную интерполяцию для выравнивания перекрытий и нулевых длительностей
+        var interpolatedWords = InterpolateWordTimings(words);
 
-        for (int i = 0; i < words.Count; i++)
+        var currentBlock = new List<WordTimeInfo>();
+
+        for (int i = 0; i < interpolatedWords.Count; i++)
         {
-            var currWord = words[i];
+            var currWord = interpolatedWords[i];
 
             // УМНАЯ ПОСТОБРАБОТКА: очищаем слово от знаков препинания по краям и переводим в нижний регистр
             string cleanText = PunctuationCleanRegex.Replace(currWord.Text ?? string.Empty, string.Empty).ToLower();
 
-            // Если после очистки слово стало пустым (например, это был одиночный знак «...» или «?»), пропускаем его
             if (string.IsNullOrWhiteSpace(cleanText)) continue;
 
-            // Создаем новый объект с чистым текстом
             var processedWord = currWord with { Text = cleanText };
 
-            if (currentPhrase.Count > 0)
+            if (currentBlock.Count > 0)
             {
-                var prevWord = currentPhrase.Last();
+                var prevWord = currentBlock.Last();
                 TimeSpan prevEnd = prevWord.End > prevWord.Start ? prevWord.End : prevWord.Start + TimeSpan.FromMilliseconds(200);
-                double originalGapMs = (processedWord.Start - prevEnd).TotalMilliseconds;
+                double gapMs = (processedWord.Start - prevEnd).TotalMilliseconds;
 
-                bool isLongPause = originalGapMs > 450;
-                bool isHugeGap = originalGapMs > 2500;
-                bool isLineTooLong = currentPhrase.Count >= 6 || currentPhraseChars > 25;
+                // Если пауза между словами больше 1.5 секунд, начинаем новый блок
+                bool isPauseTooLong = gapMs > 1500;
 
-                if ((isLongPause && currentPhrase.Count >= 3) || isLineTooLong || isHugeGap)
+                // Проверяем, помещается ли новое слово в лимит 2 строк по 40 символов
+                bool canFit = CanFitInTwoLines(currentBlock, processedWord, 40);
+
+                if (isPauseTooLong || !canFit)
                 {
-                    CapitalizeFirstWord(currentPhrase);
-                    phrases.Add(currentPhrase);
-                    currentPhrase = new List<WordTimeInfo>();
-                    currentPhraseChars = 0;
+                    CapitalizeFirstWord(currentBlock);
+                    phrases.Add(currentBlock);
+                    currentBlock = new List<WordTimeInfo>();
                 }
             }
 
-            currentPhrase.Add(processedWord);
-            currentPhraseChars += processedWord.Text.Length + 1; // +1 для пробела
+            currentBlock.Add(processedWord);
         }
 
-        if (currentPhrase.Count > 0)
+        if (currentBlock.Count > 0)
         {
-            CapitalizeFirstWord(currentPhrase);
-            phrases.Add(currentPhrase);
+            CapitalizeFirstWord(currentBlock);
+            phrases.Add(currentBlock);
         }
 
         return phrases;
+    }
+
+    private bool CanFitInTwoLines(List<WordTimeInfo> blockWords, WordTimeInfo newWord, int maxLineLen)
+    {
+        var tempWords = new List<WordTimeInfo>(blockWords) { newWord };
+        
+        // Считаем общую длину, если все в одну строку
+        int totalLen = tempWords.Sum(w => w.Text.Length) + tempWords.Count - 1;
+        if (totalLen <= maxLineLen) return true;
+
+        // Ищем хотя бы один вариант разбиения на 2 строки, где каждая <= maxLineLen
+        for (int k = 1; k < tempWords.Count; k++)
+        {
+            int line1Len = tempWords.Take(k).Sum(w => w.Text.Length) + k - 1;
+            int line2Len = tempWords.Skip(k).Sum(w => w.Text.Length) + (tempWords.Count - k) - 1;
+
+            if (line1Len <= maxLineLen && line2Len <= maxLineLen)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private int GetBestSplitIndex(List<WordTimeInfo> blockWords, int maxLineLen)
+    {
+        int totalLen = blockWords.Sum(w => w.Text.Length) + blockWords.Count - 1;
+        if (totalLen <= maxLineLen) return -1; // Не нужно переносить
+
+        int bestK = -1;
+        int minDiff = int.MaxValue;
+
+        for (int k = 1; k < blockWords.Count; k++)
+        {
+            int line1Len = blockWords.Take(k).Sum(w => w.Text.Length) + k - 1;
+            int line2Len = blockWords.Skip(k).Sum(w => w.Text.Length) + (blockWords.Count - k) - 1;
+
+            if (line1Len <= maxLineLen && line2Len <= maxLineLen)
+            {
+                int diff = Math.Abs(line1Len - line2Len);
+                if (diff < minDiff)
+                {
+                    minDiff = diff;
+                    bestK = k;
+                }
+            }
+        }
+
+        // Если не нашли идеального сплита, сплитим по середине
+        if (bestK == -1)
+        {
+            bestK = blockWords.Count / 2;
+        }
+
+        return bestK;
     }
 
     private void CapitalizeFirstWord(List<WordTimeInfo> phrase)
@@ -196,7 +252,9 @@ public class AssSubtitleGenerator : ISubtitleGenerator
             var lineBuilder = new StringBuilder($"{{\\fad({FadeTimeMs}, {FadeTimeMs})}}");
             TimeSpan currentTime = lineStart;
 
-            // Сборка слов фразы
+            // Находим точку сплита на две строки
+            int splitIdx = GetBestSplitIndex(phrase, 40);
+
             for (int j = 0; j < phrase.Count; j++)
             {
                 var word = phrase[j];
@@ -223,7 +281,14 @@ public class AssSubtitleGenerator : ISubtitleGenerator
                 int wordCs = (int)Math.Round((shiftedWordEnd - shiftedWordStart).TotalMilliseconds / 10.0);
                 if (wordCs <= 0) wordCs = 1;
 
-                string trailingSpace = (j != phrase.Count - 1) ? " " : "";
+                // Перенос строки перед текущим словом, если достигли splitIdx
+                if (j == splitIdx)
+                {
+                    lineBuilder.Append("\\N");
+                }
+
+                // В конце строки пробел не нужен, также как и перед переносом строки \N
+                string trailingSpace = (j != phrase.Count - 1 && j != splitIdx - 1) ? " " : "";
                 lineBuilder.Append($"{{\\kf{wordCs}}}{word.Text}{trailingSpace}");
 
                 currentTime = shiftedWordEnd;
@@ -251,5 +316,87 @@ public class AssSubtitleGenerator : ISubtitleGenerator
         long hours = totalMinutes / 60;
 
         return $"{hours:D1}:{mins:D2}:{secs:D2}.{cs:D2}";
+    }
+
+    private List<WordTimeInfo> InterpolateWordTimings(List<WordTimeInfo> words)
+    {
+        if (words == null || words.Count == 0) return new List<WordTimeInfo>();
+
+        var cleanWords = new List<WordTimeInfo>();
+        foreach (var w in words)
+        {
+            cleanWords.Add(w with { });
+        }
+
+        // 1. Исправляем нулевую или отрицательную длительность каждого отдельного слова
+        for (int i = 0; i < cleanWords.Count; i++)
+        {
+            if (cleanWords[i].End <= cleanWords[i].Start)
+            {
+                cleanWords[i].End = cleanWords[i].Start.Add(TimeSpan.FromMilliseconds(150));
+            }
+        }
+
+        // 2. Исправляем перекрытия и взаимное наложение слов
+        int idx = 0;
+        while (idx < cleanWords.Count)
+        {
+            int startIdx = idx;
+            TimeSpan maxTime = cleanWords[idx].End;
+            int endIdx = idx;
+
+            while (endIdx + 1 < cleanWords.Count && cleanWords[endIdx + 1].Start < maxTime)
+            {
+                endIdx++;
+                if (cleanWords[endIdx].End > maxTime)
+                {
+                    maxTime = cleanWords[endIdx].End;
+                }
+            }
+
+            if (endIdx > startIdx)
+            {
+                TimeSpan totalSpanStart = cleanWords[startIdx].Start;
+                TimeSpan totalSpanEnd = maxTime;
+                double totalDurationMs = (totalSpanEnd - totalSpanStart).TotalMilliseconds;
+
+                double totalLength = 0;
+                for (int i = startIdx; i <= endIdx; i++)
+                {
+                    totalLength += Math.Max(1, cleanWords[i].Text.Length);
+                }
+
+                double elapsedMs = 0;
+                for (int i = startIdx; i <= endIdx; i++)
+                {
+                    double wordLen = Math.Max(1, cleanWords[i].Text.Length);
+                    double wordDurationMs = (wordLen / totalLength) * totalDurationMs;
+
+                    if (wordDurationMs < 100) wordDurationMs = 100;
+
+                    cleanWords[i].Start = totalSpanStart.Add(TimeSpan.FromMilliseconds(elapsedMs));
+                    cleanWords[i].End = cleanWords[i].Start.Add(TimeSpan.FromMilliseconds(wordDurationMs));
+
+                    elapsedMs += wordDurationMs;
+                }
+            }
+
+            idx = endIdx + 1;
+        }
+
+        // Итоговая хронологическая коррекция
+        for (int i = 1; i < cleanWords.Count; i++)
+        {
+            if (cleanWords[i].Start < cleanWords[i - 1].End)
+            {
+                cleanWords[i].Start = cleanWords[i - 1].End;
+                if (cleanWords[i].End <= cleanWords[i].Start)
+                {
+                    cleanWords[i].End = cleanWords[i].Start.Add(TimeSpan.FromMilliseconds(150));
+                }
+            }
+        }
+
+        return cleanWords;
     }
 }

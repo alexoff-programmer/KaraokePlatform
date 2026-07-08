@@ -2,102 +2,109 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Text;
-using System.Text.RegularExpressions;
 using KaraokePlatform.Services.Audio.Interfaces;
+using Microsoft.AspNetCore.Hosting;
+using OwnaudioNET.Features.Vocalremover;
 
 namespace KaraokePlatform.Services.Audio;
 
 public class AudioProcessor : IAudioProcessor
 {
-    private static readonly Regex ProgressRegex = new Regex(@"(\d+)(?:.\d+)?%", RegexOptions.Compiled);
+    private readonly IWebHostEnvironment _environment;
 
-    // ИСПРАВЛЕНО: Добавлен параметр instrumentalOutputPath и качество разделения
-    public void ConvertAndFilterMp3ToWav(string inputPath, string outputPath, string instrumentalOutputPath, string quality = "medium", Action<int>? onProgress = null)
+    public AudioProcessor(IWebHostEnvironment environment)
+    {
+        _environment = environment;
+    }
+
+    public void ConvertAndFilterMp3ToWav(
+        string inputPath, 
+        string outputPath, 
+        string instrumentalOutputPath, 
+        string quality = "medium", 
+        Action<int>? onProgress = null)
     {
         string tempOutputDir = Path.Combine(Path.GetTempPath(), "KaraokeTemp", $"sep_{Guid.NewGuid()}");
         Directory.CreateDirectory(tempOutputDir);
 
+        string tempStereoWav = Path.Combine(tempOutputDir, "input_stereo.wav");
+        string absoluteModelPath = Path.Combine(_environment.ContentRootPath, "Models", "audio_models", "Kim_Vocal_2.onnx");
+
         try
         {
-            string modelName = "Kim_Vocal_2.onnx";
-            string modelArgs = "--mdx_overlap 0.25";
+            onProgress?.Invoke(5); // Подготовка
+            
+            // 1. Предварительно декодируем/конвертируем входной файл в 44100Hz stereo WAV
+            PreConvertAudioToStereo44100Wav(inputPath, tempStereoWav);
+            onProgress?.Invoke(10);
 
-            if (quality.Equals("high", StringComparison.OrdinalIgnoreCase))
+            // 2. Инициализируем и запускаем разделение вокала на C# через ONNX Runtime
+            SimpleAudioSeparationService? separator = null;
+            try
             {
-                modelName = "model_bs_roformer_ep_317_sdr_12.9755.ckpt";
-                modelArgs = ""; // Использовать оптимальные встроенные дефолты для Roformer (MDXC)
+                if (quality.Equals("high", StringComparison.OrdinalIgnoreCase))
+                {
+                    var options = new SimpleSeparationOptions
+                    {
+                        Model = InternalModel.Best,
+                        OutputDirectory = tempOutputDir,
+                        EnableGPU = false
+                    };
+                    separator = new SimpleAudioSeparationService(options);
+                    separator.Initialize();
+                }
             }
-            else if (quality.Equals("low", StringComparison.OrdinalIgnoreCase))
+            catch
             {
-                modelName = "Kim_Vocal_2.onnx";
-                modelArgs = "--mdx_overlap 0.05"; // Очень быстрый оверлап для экономии CPU ресурсов
+                // Откат на локальную Kim_Vocal_2, если оффлайн или ошибка скачивания
+                separator?.Dispose();
+                separator = null;
             }
 
-            var arguments = $"\"{inputPath}\" -m {modelName} {modelArgs} --output_dir \"{tempOutputDir}\" --output_format WAV";
-
-            var startInfo = new ProcessStartInfo
+            if (separator == null)
             {
-                FileName = "audio-separator",
-                Arguments = arguments,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
+                var options = new SimpleSeparationOptions
+                {
+                    ModelPath = absoluteModelPath,
+                    OutputDirectory = tempOutputDir,
+                    NFft = 7680,
+                    DimF = 3072,
+                    DimT = 8,
+                    EnableGPU = false
+                };
+                separator = new SimpleAudioSeparationService(options);
+                separator.Initialize();
+            }
 
-            using var process = new Process();
-            process.StartInfo = startInfo;
-            var stderrBuilder = new StringBuilder();
-
-            process.ErrorDataReceived += (sender, args) =>
+            using (separator)
             {
-                if (args.Data == null) return;
-                stderrBuilder.AppendLine(args.Data);
-
                 if (onProgress != null)
                 {
-                    var match = ProgressRegex.Match(args.Data);
-                    if (match.Success && int.TryParse(match.Groups[1].Value, out int percent))
+                    separator.ProgressChanged += (sender, progress) =>
                     {
-                        int overallPercent = 10 + (percent * 15) / 100;
+                        // Масштабируем внутренний прогресс в диапазон 10-25% общего прогресса
+                        int overallPercent = 10 + (int)(progress.OverallProgress * 15 / 100);
                         onProgress.Invoke(overallPercent);
-                    }
+                    };
                 }
-            };
 
-            process.Start();
-            process.BeginErrorReadLine();
-            process.WaitForExit();
+                var result = separator.Separate(tempStereoWav);
 
-            if (process.ExitCode != 0)
-            {
-                throw new Exception($"ИИ-разделение аудио завершилось с ошибкой (Код {process.ExitCode}): {stderrBuilder}");
+                onProgress?.Invoke(25);
+
+                // 3. Валидируем результаты разделения
+                if (!File.Exists(result.VocalsPath) || !File.Exists(result.InstrumentalPath))
+                {
+                    throw new FileNotFoundException("Файлы после разделения вокала не были созданы разделяющим сервисом.");
+                }
+
+                // 4. Перемещаем чистую минусовку (инструментал) в конечное место
+                if (File.Exists(instrumentalOutputPath)) File.Delete(instrumentalOutputPath);
+                File.Move(result.InstrumentalPath, instrumentalOutputPath);
+
+                // 5. Пережимаем вокал в моно 16кГц с фильтрацией для Whisper
+                DownsampleToWhisperFormat(result.VocalsPath, outputPath);
             }
-
-            onProgress?.Invoke(25);
-
-            string inputFileNameNoExt = Path.GetFileNameWithoutExtension(inputPath);
-            var outputDirInfo = new DirectoryInfo(tempOutputDir);
-
-            var vocalsFile = outputDirInfo.GetFiles($"*{inputFileNameNoExt}*(Vocals)*.wav").FirstOrDefault();
-            // НОВОЕ: Находим файл инструментала
-            var instrumentalFile = outputDirInfo.GetFiles($"*{inputFileNameNoExt}*(Instrumental)*.wav").FirstOrDefault();
-
-            if (vocalsFile == null || !vocalsFile.Exists)
-            {
-                throw new FileNotFoundException($"Файл вокала не найден в папке {tempOutputDir}. Лог утилиты: {stderrBuilder}");
-            }
-            if (instrumentalFile == null || !instrumentalFile.Exists)
-            {
-                throw new FileNotFoundException($"Файл инструментала (минусовки) не найден в папке {tempOutputDir}. Лог утилиты: {stderrBuilder}");
-            }
-
-            // НОВОЕ: Перемещаем чистую минусовку в её постоянное место (которое потом отдадим в VideoRenderer)
-            if (File.Exists(instrumentalOutputPath)) File.Delete(instrumentalOutputPath);
-            File.Move(instrumentalFile.FullName, instrumentalOutputPath);
-
-            // Пережимаем в Моно 16кГц для Whisper
-            DownsampleToWhisperFormat(vocalsFile.FullName, outputPath);
         }
         finally
         {
@@ -108,12 +115,37 @@ public class AudioProcessor : IAudioProcessor
         }
     }
 
+    private void PreConvertAudioToStereo44100Wav(string inputPath, string tempStereoWav)
+    {
+        var arguments = $"-y -i \"{inputPath}\" -ar 44100 -ac 2 -c:a pcm_s16le \"{tempStereoWav}\"";
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "ffmpeg",
+            Arguments = arguments,
+            CreateNoWindow = true,
+            UseShellExecute = false,
+            RedirectStandardError = true
+        };
+
+        using var process = Process.Start(startInfo);
+        if (process == null) throw new Exception("Не удалось запустить FFmpeg для предварительного декодирования.");
+
+        string ffmpegErrors = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+
+        if (process.ExitCode != 0 || !File.Exists(tempStereoWav))
+        {
+            throw new Exception($"FFmpeg декодер завершился с ошибкой (Код: {process.ExitCode}).\nЛог:\n{ffmpegErrors}");
+        }
+    }
+
     private void DownsampleToWhisperFormat(string inputWav, string outputWav)
     {
-        // amix=inputs=1: смешивает каналы одного входного потока без потери громкости, защищая от пустого канала
-        // highpass=f=120: срезает низкочастотные ИИ-артефакты/гул разделения вокала ниже 120 Гц, чтобы они не путали Whisper
-        // volume=1.5: делает вокал громче и четче для лучшего распознавания
-        var audioFilter = "amix=inputs=1,highpass=f=120,volume=1.5";
+        // amix=inputs=1: смешивает каналы одного входного потока без потери громкости
+        // highpass=f=120: срезает низкочастотные ИИ-артефакты ниже 120 Гц
+        // equalizer: поднимает разборчивость речи на частоте 3000 Гц
+        // volume=1.5: делает вокал громче и четче
+        var audioFilter = "amix=inputs=1:normalize=0,highpass=f=120,equalizer=f=3000:width_type=h:width=2000:g=4,volume=1.5";
         var arguments = $"-y -i \"{inputWav}\" -af \"{audioFilter}\" -ar 16000 -ac 1 -c:a pcm_s16le \"{outputWav}\"";
 
         var startInfo = new ProcessStartInfo
@@ -132,11 +164,9 @@ public class AudioProcessor : IAudioProcessor
             throw new Exception("Не удалось запустить процесс FFmpeg.");
         }
 
-        // Вычитываем логи ошибок FFmpeg в реальном времени
         string ffmpegErrors = process.StandardError.ReadToEnd();
         process.WaitForExit();
 
-        // ЖЕЛЕЗНАЯ ВАЛИДАЦИЯ: Проверяем код возврата ОС и физическое наличие файла на диске
         if (process.ExitCode != 0 || !File.Exists(outputWav))
         {
             throw new Exception(
@@ -145,5 +175,4 @@ public class AudioProcessor : IAudioProcessor
             );
         }
     }
-
 }
