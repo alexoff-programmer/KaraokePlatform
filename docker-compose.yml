@@ -6,17 +6,38 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      network: host
     ports:
-      - "5000:8080" # Приложение будет доступно по адресу http://localhost:5000
+      - "5000:8080" # Приложение доступно по адресу http://localhost:5000
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
+      # Указываем бэкенду адрес нашего нового Python-микросервиса
+      - WhisperSettings__ModelPath=http://transcription-service:8000
     volumes:
       # Сохраняем базу данных SQLite
       - ./instance:/app/instance
       # Сохраняем загруженные файлы пользователей и готовые MP4
       - ./wwwroot/uploads:/app/wwwroot/uploads
       - ./wwwroot/output:/app/wwwroot/output
-      # Сохраняем скачанные ИИ-модели (Whisper и ONNX), чтобы они не качались заново при перезапуске
+      # Сохраняем скачанные ИИ-модели разделения вокала
       - ./Models:/app/Models
       - /root/.cache/audio-separator:/root/.cache/audio-separator
+    restart: always
+    depends_on:
+      - transcription-service
+
+  transcription-service:
+    container_name: transcription_whisperx_container
+    build:
+      context: ./Services/Transcription # Путь к папке с app.py и Dockerfile сервиса WhisperX
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - WHISPER_MODEL=medium  # Можно поменять на tiny, small, medium, large
+      - HF_TOKEN=***REMOVED*** # Токен для работы PyAnnote VAD
+    volumes:
+      # Маппим папку к кэшу Hugging Face внутри контейнера, чтобы модели скачивались только один раз
+      - ./Models/whisperx_cache:/root/.cache
+    # Блок deploy с привязкой к GPU полностью удален для корректного запуска на CPU
     restart: always

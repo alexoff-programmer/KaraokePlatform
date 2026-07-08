@@ -9,6 +9,5 @@ public interface ISpeechRecognizer
     Task<List<WordTimeInfo>> TranscribeAndMergeTokensAsync(
         string wavPath,
         string language,
-        List<(TimeSpan Start, TimeSpan End)> vocalIntervals,
         Action<int> onProgress);
 }

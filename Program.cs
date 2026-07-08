@@ -18,8 +18,6 @@ if (!Directory.Exists(instancePath))
     Directory.CreateDirectory(instancePath);
 }
 
-// Проверяем наличие модели при старте приложения и скачиваем её, если она отсутствует
-await ModelDownloader.EnsureModelExistsAsync(builder.Environment.ContentRootPath);
 
 // Регистрация базы данных SQLite
 builder.Services.AddDbContext<AppDbContext>(options =>
@@ -36,13 +34,18 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
 // Регистрация бизнес-сервиса
 builder.Services.AddScoped<UserService>();
 
+builder.Services.AddHttpClient<ISpeechRecognizer, WhisperRecognizer>(client =>
+{
+    client.Timeout = TimeSpan.FromMinutes(20);
+});
+
 // РЕГИСТРАЦИЯ СЕРВИСОВ ДЛЯ ОБРАБОТКИ АУДИО
 builder.Services.Configure<WhisperSettings>(builder.Configuration.GetSection("WhisperSettings"));
 builder.Services.AddScoped<IAudioProcessor, AudioProcessor>();
 builder.Services.AddScoped<ISpeechRecognizer, WhisperRecognizer>();
 builder.Services.AddScoped<ISubtitleGenerator, AssSubtitleGenerator>();
-builder.Services.AddScoped<IAudioSilenceAnalyzer, AudioSilenceAnalyzer>();
 builder.Services.AddScoped<WhisperTranscriber>();
+
 
 // РЕГИСТРАЦИЯ СЕРВИСОВ ДЛЯ ОБРАБОТКИ ВИДЕО
 builder.Services.AddScoped<VideoRenderer>();

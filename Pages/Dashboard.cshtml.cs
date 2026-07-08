@@ -49,6 +49,9 @@ public class DashboardModel : PageModel
     public string SelectedLanguage { get; set; } = "auto";
 
     [BindProperty]
+    public string SelectedQuality { get; set; } = "medium";
+
+    [BindProperty]
     public IFormFile? UploadedBackground { get; set; }
 
     [BindProperty]
@@ -155,6 +158,7 @@ public class DashboardModel : PageModel
             BackgroundImagePath = dbBackgroundPath,
             Language = SelectedLanguage,
             RemoveVocal = this.RemoveVocal,
+            SeparationQuality = SelectedQuality,
             Status = TaskStatus.InQueue,
             CreatedAt = DateTime.UtcNow
         };

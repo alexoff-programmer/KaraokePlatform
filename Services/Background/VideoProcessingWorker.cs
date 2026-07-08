@@ -94,7 +94,7 @@ public class VideoProcessingWorker : BackgroundService
 
                     var fullAudioPathPhase1 = Path.Combine(webHostEnvironment.WebRootPath, task.AudioFilePath.TrimStart('\\', '/'));
 
-                    var phrases = await transcriber.ProcessAudioToPhrasesAsync(task.Id, fullAudioPathPhase1, task.Language, async (progress) =>
+                    var phrases = await transcriber.ProcessAudioToPhrasesAsync(task.Id, fullAudioPathPhase1, task.Language, task.SeparationQuality, async (progress) =>
                     {
                         if (!string.IsNullOrEmpty(username))
                         {
@@ -171,10 +171,18 @@ public class VideoProcessingWorker : BackgroundService
                     _cancellationManager.UnregisterTask(task.Id);
                 }
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException ex)
             {
-                _logger.LogWarning($"Обработка задачи {taskId} была принудительно прервана пользователем.");
-                _cancellationManager.UnregisterTask(taskId);
+                if (taskToken.IsCancellationRequested)
+                {
+                    _logger.LogWarning($"Обработка задачи {taskId} была принудительно прервана пользователем.");
+                    _cancellationManager.UnregisterTask(taskId);
+                }
+                else
+                {
+                    _logger.LogError(ex, $"Обработка задачи {taskId} была прервана из-за таймаута или внутренней ошибки отмены.");
+                    throw;
+                }
             }
             catch (Exception ex)
             {

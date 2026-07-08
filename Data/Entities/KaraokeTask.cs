@@ -29,6 +29,10 @@ namespace KaraokePlatform.Data.Entities
         [Required]
         public bool RemoveVocal { get; set; } = true; // По умолчанию включено
 
+        [Required]
+        [MaxLength(20)]
+        public string SeparationQuality { get; set; } = "medium"; // high, medium, low
+
         public string? DetectedLinesJson { get; set; }
 
         // Путь к готовому .mp4 файлу (будет пустым, пока статус не Completed)

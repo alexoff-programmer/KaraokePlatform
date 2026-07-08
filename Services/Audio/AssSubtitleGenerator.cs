@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using KaraokePlatform.Services.Audio.Interfaces;
 using KaraokePlatform.Services.Audio.Records;
 
@@ -10,16 +11,18 @@ namespace KaraokePlatform.Services.Audio;
 public class AssSubtitleGenerator : ISubtitleGenerator
 {
     private static readonly TimeSpan TimeShift = TimeSpan.FromMilliseconds(200);
-
     private const double InstrumentSilenceThresholdMs = 1200;
 
     // Настройки аккуратного последовательного отображения без каши
     private int FadeTimeMs = 0;
-    private int FadeBufferMs = 50;        // Небольшой зазор между физическим исчезновением одной строки и появлением другой
+    private int FadeBufferMs = 50; // Небольшой зазор между физическим исчезновением одной строки и появлением другой
     private int MaxHoldAfterSpeechMs = 500;
 
-    // НОВОЕ: На сколько секунд раньше строка должна появиться на экране для подготовки
+    // На сколько секунд раньше строка должна появиться на экране для подготовки
     private static readonly TimeSpan PreRollTime = TimeSpan.FromSeconds(2.0);
+
+    // Регулярное выражение находит любые знаки препинания в начале или конце строки, ИГНОРИРУЯ дефисы и апострофы внутри слова
+    private static readonly Regex PunctuationCleanRegex = new Regex(@"(^[\p{P}&&[^\-']]+)|([\p{P}&&[^\-']]+$)", RegexOptions.Compiled);
 
     public string GenerateKaraokeMarkup(List<WordTimeInfo> words)
     {
@@ -54,39 +57,70 @@ public class AssSubtitleGenerator : ISubtitleGenerator
     public List<List<WordTimeInfo>> GroupWordsIntoPhrases(List<WordTimeInfo> words)
     {
         var phrases = new List<List<WordTimeInfo>>();
-        var currentPhrase = new List<WordTimeInfo> { words[0] };
+        if (words == null || words.Count == 0) return phrases;
 
-        // ИСПРАВЛЕНО: Считаем суммарную длину фразы в символах, чтобы короткие слова не дробились слишком часто
-        int currentPhraseChars = words[0].Text?.Length ?? 0;
+        // Создаем чистый список для первой фразы
+        var currentPhrase = new List<WordTimeInfo>();
+        int currentPhraseChars = 0;
 
-        for (int i = 1; i < words.Count; i++)
+        for (int i = 0; i < words.Count; i++)
         {
-            var prevWord = words[i - 1];
             var currWord = words[i];
 
-            TimeSpan prevEnd = prevWord.End > prevWord.Start ? prevWord.End : prevWord.Start + TimeSpan.FromMilliseconds(200);
-            double originalGapMs = (currWord.Start - prevEnd).TotalMilliseconds;
+            // УМНАЯ ПОСТОБРАБОТКА: очищаем слово от знаков препинания по краям и переводим в нижний регистр
+            string cleanText = PunctuationCleanRegex.Replace(currWord.Text ?? string.Empty, string.Empty).ToLower();
 
-            // ИСПРАВЛЕНО: Изменили правила переноса. 
-            // 1. Пауза должна быть действительно ощутимой (было 280мс, стало 600мс).
-            // 2. Лимит слов увеличили с 4 до 8, либо если строка набрала приличную длину (> 35 символов).
-            // 3. Если в строке всего 1-2 слова, МЫ НЕ ДЕЛАЕМ перенос, даже если пауза большая (исключение — огромный проигрыш > 2.5 сек).
-            bool isLongPause = originalGapMs > 600;
-            bool isHugeGap = originalGapMs > 2500;
-            bool isLineTooLong = currentPhrase.Count >= 8 || currentPhraseChars > 35;
+            // Если после очистки слово стало пустым (например, это был одиночный знак «...» или «?»), пропускаем его
+            if (string.IsNullOrWhiteSpace(cleanText)) continue;
 
-            if ((isLongPause && currentPhrase.Count >= 3) || isLineTooLong || isHugeGap)
+            // Создаем новый объект с чистым текстом
+            var processedWord = currWord with { Text = cleanText };
+
+            if (currentPhrase.Count > 0)
             {
-                phrases.Add(currentPhrase);
-                currentPhrase = new List<WordTimeInfo>();
-                currentPhraseChars = 0;
+                var prevWord = currentPhrase.Last();
+                TimeSpan prevEnd = prevWord.End > prevWord.Start ? prevWord.End : prevWord.Start + TimeSpan.FromMilliseconds(200);
+                double originalGapMs = (processedWord.Start - prevEnd).TotalMilliseconds;
+
+                bool isLongPause = originalGapMs > 450;
+                bool isHugeGap = originalGapMs > 2500;
+                bool isLineTooLong = currentPhrase.Count >= 6 || currentPhraseChars > 25;
+
+                if ((isLongPause && currentPhrase.Count >= 3) || isLineTooLong || isHugeGap)
+                {
+                    CapitalizeFirstWord(currentPhrase);
+                    phrases.Add(currentPhrase);
+                    currentPhrase = new List<WordTimeInfo>();
+                    currentPhraseChars = 0;
+                }
             }
 
-            currentPhrase.Add(currWord);
-            currentPhraseChars += (currWord.Text?.Length ?? 0) + 1; // +1 для пробела
+            currentPhrase.Add(processedWord);
+            currentPhraseChars += processedWord.Text.Length + 1; // +1 для пробела
         }
-        if (currentPhrase.Count > 0) phrases.Add(currentPhrase);
+
+        if (currentPhrase.Count > 0)
+        {
+            CapitalizeFirstWord(currentPhrase);
+            phrases.Add(currentPhrase);
+        }
+
         return phrases;
+    }
+
+    private void CapitalizeFirstWord(List<WordTimeInfo> phrase)
+    {
+        if (phrase == null || phrase.Count == 0) return;
+
+        var firstWordInfo = phrase[0];
+        string word = firstWordInfo.Text;
+
+        if (!string.IsNullOrEmpty(word))
+        {
+            // Делаем заглавной строго первую букву всей фразы
+            string capitalizedWord = char.ToUpper(word[0]) + word[1..];
+            phrase[0] = firstWordInfo with { Text = capitalizedWord };
+        }
     }
 
     private void ExtendPhraseEnds(List<List<WordTimeInfo>> phrases)
@@ -112,7 +146,6 @@ public class AssSubtitleGenerator : ISubtitleGenerator
 
     private void BuildDialogueLines(StringBuilder sb, List<List<WordTimeInfo>> phrases)
     {
-        // Храним конец предыдущей строки, чтобы новая не выскочила раньше времени
         TimeSpan absoluteMinStart = TimeSpan.Zero;
 
         for (int i = 0; i < phrases.Count; i++)
@@ -141,27 +174,20 @@ public class AssSubtitleGenerator : ISubtitleGenerator
                 lineEnd = phrase.Last().End - TimeShift + TimeSpan.FromMilliseconds(600);
             }
 
-            // 2. ИСПРАВЛЕНО: Появление заранее (PreRoll)
-            // Пытаемся сдвинуть старт отображения строки назад на PreRollTime (2 секунды)
+            // 2. Появление заранее (PreRoll)
             var singingStart = phrase.First().Start - TimeShift;
             if (singingStart < TimeSpan.Zero) singingStart = TimeSpan.Zero;
 
             var lineStart = singingStart - PreRollTime;
 
-            // Защита: строка не может появиться раньше, чем исчезла предыдущая + микро зазор
             if (lineStart < absoluteMinStart)
             {
                 lineStart = absoluteMinStart;
             }
 
-            // Если песня только началась или пауза была слишком маленькой, lineStart может догнать singingStart. 
-            // Главное, чтобы старт отображения строки не ушел позже самого пения.
             if (lineStart > singingStart) lineStart = singingStart;
-
-            // Страховка от вырождения таймингов
             if (lineEnd < lineStart) lineEnd = lineStart + TimeSpan.FromMilliseconds(500);
 
-            // Запоминаем текущий физический конец для следующей итерации
             absoluteMinStart = lineEnd + TimeSpan.FromMilliseconds(FadeBufferMs);
 
             string assStart = FormatTimeSpanForAss(lineStart);
@@ -187,8 +213,6 @@ public class AssSubtitleGenerator : ISubtitleGenerator
                     shiftedWordEnd += overlap;
                 }
 
-                // Благодаря тому, что мы сдвинули lineStart назад, здесь автоматически
-                // посчитается пауза ожидания перед первым словом фраз и запишется в \kf тег.
                 var pauseDuration = shiftedWordStart - currentTime;
                 if (pauseDuration.TotalMilliseconds > 10)
                 {
@@ -205,7 +229,6 @@ public class AssSubtitleGenerator : ISubtitleGenerator
                 currentTime = shiftedWordEnd;
             }
 
-            // Корректно закрываем караоке-таймлайн до физического конца строки ASS
             if (currentTime < lineEnd)
             {
                 int finalWaitCs = (int)Math.Round((lineEnd - currentTime).TotalMilliseconds / 10.0);

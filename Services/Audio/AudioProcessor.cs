@@ -12,15 +12,29 @@ public class AudioProcessor : IAudioProcessor
 {
     private static readonly Regex ProgressRegex = new Regex(@"(\d+)(?:.\d+)?%", RegexOptions.Compiled);
 
-    // ИСПРАВЛЕНО: Добавлен параметр instrumentalOutputPath
-    public void ConvertAndFilterMp3ToWav(string inputPath, string outputPath, string instrumentalOutputPath, Action<int>? onProgress = null)
+    // ИСПРАВЛЕНО: Добавлен параметр instrumentalOutputPath и качество разделения
+    public void ConvertAndFilterMp3ToWav(string inputPath, string outputPath, string instrumentalOutputPath, string quality = "medium", Action<int>? onProgress = null)
     {
         string tempOutputDir = Path.Combine(Path.GetTempPath(), "KaraokeTemp", $"sep_{Guid.NewGuid()}");
         Directory.CreateDirectory(tempOutputDir);
 
         try
         {
-            var arguments = $"\"{inputPath}\" -m Kim_Vocal_2.onnx --output_dir \"{tempOutputDir}\" --output_format WAV";
+            string modelName = "Kim_Vocal_2.onnx";
+            string modelArgs = "--mdx_overlap 0.25";
+
+            if (quality.Equals("high", StringComparison.OrdinalIgnoreCase))
+            {
+                modelName = "model_bs_roformer_ep_317_sdr_12.9755.ckpt";
+                modelArgs = ""; // Использовать оптимальные встроенные дефолты для Roformer (MDXC)
+            }
+            else if (quality.Equals("low", StringComparison.OrdinalIgnoreCase))
+            {
+                modelName = "Kim_Vocal_2.onnx";
+                modelArgs = "--mdx_overlap 0.05"; // Очень быстрый оверлап для экономии CPU ресурсов
+            }
+
+            var arguments = $"\"{inputPath}\" -m {modelName} {modelArgs} --output_dir \"{tempOutputDir}\" --output_format WAV";
 
             var startInfo = new ProcessStartInfo
             {
@@ -96,12 +110,10 @@ public class AudioProcessor : IAudioProcessor
 
     private void DownsampleToWhisperFormat(string inputWav, string outputWav)
     {
-        // НАСТРОЙКА ГЕЙТА:
-        // agate=threshold=-40dB означает: всё, что тише -40 децибел, превращается в абсолютный ноль.
-        // range=0: коэффициент ослабления (полное глушение).
-        // attack=20: скорость срабатывания в мс (чтобы не проглотить начало первой буквы).
-        // release=200: скорость закрытия гейта в мс (чтобы мягко затухало окончание слов).
-        var audioFilter = "agate=threshold=-40dB:range=0:attack=20:release=200";
+        // amix=inputs=1: смешивает каналы одного входного потока без потери громкости, защищая от пустого канала
+        // highpass=f=120: срезает низкочастотные ИИ-артефакты/гул разделения вокала ниже 120 Гц, чтобы они не путали Whisper
+        // volume=1.5: делает вокал громче и четче для лучшего распознавания
+        var audioFilter = "amix=inputs=1,highpass=f=120,volume=1.5";
         var arguments = $"-y -i \"{inputWav}\" -af \"{audioFilter}\" -ar 16000 -ac 1 -c:a pcm_s16le \"{outputWav}\"";
 
         var startInfo = new ProcessStartInfo

@@ -1,0 +1,15 @@
+# Directories to ignore
+bin/
+obj/
+instance/
+wwwroot/uploads/
+wwwroot/output/
+
+# Exclude large models and caches from build context
+Models/ggml-medium.bin
+Models/whisperx_cache/
+
+# Git folders/files
+.git/
+.gitattributes
+.gitignore

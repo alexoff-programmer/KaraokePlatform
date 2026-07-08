@@ -70,6 +70,20 @@
                                     <option value="en">🇺🇸 Английский</option>
                                 </select>
                             </div>
+                            <div class="mb-4">
+                                <label class="form-label text-muted small d-block">Качество разделения вокала</label>
+                                <div class="btn-group w-100" role="group" aria-label="Separation Quality">
+                                    <input type="radio" class="btn-check" name="SelectedQuality" id="qualityLow" value="low" autocomplete="off" />
+                                    <label class="btn btn-outline-primary py-2 fw-semibold" for="qualityLow">Низкое</label>
+
+                                    <input type="radio" class="btn-check" name="SelectedQuality" id="qualityMedium" value="medium" autocomplete="off" checked />
+                                    <label class="btn btn-outline-primary py-2 fw-semibold" for="qualityMedium">Среднее</label>
+
+                                    <input type="radio" class="btn-check" name="SelectedQuality" id="qualityHigh" value="high" autocomplete="off" />
+                                    <label class="btn btn-outline-primary py-2 fw-semibold" for="qualityHigh">Высокое</label>
+                                </div>
+                                <div class="form-text small text-muted mt-2">Качество напрямую влияет на скорость: Высокое использует тяжелый ИИ (BS-Roformer), Среднее и Низкое работают быстро на базе MDX-Net.</div>
+                            </div>
                             <button type="submit" class="btn btn-primary btn-lg w-100 fw-bold">Начать обработку</button>
                         </form>
                     </div>
