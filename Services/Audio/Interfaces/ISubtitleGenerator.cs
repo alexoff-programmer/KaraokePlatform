@@ -8,6 +8,6 @@ namespace KaraokePlatform.Services.Audio.Interfaces
 {
     public interface ISubtitleGenerator
     {
-        string GenerateKaraokeMarkup(List<WordTimeInfo> words);
+        string GenerateKaraokeMarkup(List<WordTimeInfo> words, string? fontName = null, string? fillStyle = null, string? primaryColor = null, string? secondaryColor = null, string? videoFormat = null);
     }
 }

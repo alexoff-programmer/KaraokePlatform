@@ -92,7 +92,7 @@ using (var scope = app.Services.CreateScope())
     {
         context.Database.EnsureCreated();
         // Check if new columns exist
-        _ = context.KaraokeTasks.Select(t => new { t.GeminiApiKey, t.AutoImproveEnabled }).FirstOrDefault();
+        _ = context.KaraokeTasks.Select(t => new { t.GeminiApiKey, t.AutoImproveEnabled, t.SubtitleFont, t.FillStyle, t.PrimaryColor, t.SecondaryColor, t.VideoFormat, t.Progress }).FirstOrDefault();
     }
     catch (Exception)
     {

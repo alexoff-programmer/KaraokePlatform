@@ -23,7 +23,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libgomp1 \
     fontconfig \
+    fonts-open-sans \
+    fonts-noto-core \
     ca-certificates \
+    && fc-cache -fv \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

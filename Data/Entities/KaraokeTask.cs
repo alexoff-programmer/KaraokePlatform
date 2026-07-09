@@ -47,6 +47,13 @@ namespace KaraokePlatform.Data.Entities
         public string? GeminiApiKey { get; set; }
         public bool AutoImproveEnabled { get; set; }
 
+        public string SubtitleFont { get; set; } = "Outfit";
+        public string FillStyle { get; set; } = "gradient";
+        public string PrimaryColor { get; set; } = "white";
+        public string SecondaryColor { get; set; } = "purple";
+        public string VideoFormat { get; set; } = "portrait";
+        public int Progress { get; set; } = 0;
+
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
         public DateTime? UpdatedAt { get; set; }

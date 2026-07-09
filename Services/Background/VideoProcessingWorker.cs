@@ -96,6 +96,17 @@ public class VideoProcessingWorker : BackgroundService
 
                     var phrases = await transcriber.ProcessAudioToPhrasesAsync(task.Id, fullAudioPathPhase1, task.Language, task.SeparationQuality, async (progress) =>
                     {
+                        using (var dbScope = _serviceProvider.CreateScope())
+                        {
+                            var db = dbScope.ServiceProvider.GetRequiredService<AppDbContext>();
+                            var t = await db.KaraokeTasks.FindAsync(task.Id);
+                            if (t != null)
+                            {
+                                t.Progress = progress;
+                                await db.SaveChangesAsync();
+                            }
+                        }
+
                         if (!string.IsNullOrEmpty(username))
                         {
                             string statusText = $"Processing: {progress}% (Распознавание ИИ...)";
@@ -133,6 +144,10 @@ public class VideoProcessingWorker : BackgroundService
                             .SendAsync("UpdateTaskStatus", task.Id.ToString(), "Processing: 60% (Сборка видео...)", null, taskToken);
                     }
 
+                    // Save Phase 2 progress (60%)
+                    task.Progress = 60;
+                    await context.SaveChangesAsync(taskToken);
+
                     var outputFolder = Path.Combine(webHostEnvironment.WebRootPath, "output");
                     var assOutputPath = Path.Combine(outputFolder, $"{task.Id}.ass");
                     var videoFileName = $"{Guid.NewGuid()}.mp4";
@@ -152,11 +167,12 @@ public class VideoProcessingWorker : BackgroundService
                         : null;
 
                     // Передаем taskToken во внешний рендерер, чтобы можно было отменить FFmpeg
-                    await renderer.RenderKaraokeVideoAsync(fullAudioPathPhase2, assOutputPath, fullVideoOutputPath, fullBgPath);
+                    await renderer.RenderKaraokeVideoAsync(fullAudioPathPhase2, assOutputPath, fullVideoOutputPath, fullBgPath, task.VideoFormat);
 
                     taskToken.ThrowIfCancellationRequested();
 
                     task.Status = TaskStatus.Completed;
+                    task.Progress = 100;
                     task.VideoFilePath = Path.Combine("output", videoFileName);
                     task.UpdatedAt = DateTime.UtcNow;
                     await context.SaveChangesAsync(stoppingToken);

@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using KaraokePlatform.Services;
 using TaskStatus = KaraokePlatform.Data.Entities.KaraokeTaskStatus;
 
 namespace KaraokePlatform.Pages;
@@ -26,21 +27,39 @@ public class DashboardModel : PageModel
     private readonly IWebHostEnvironment _environment;
     private readonly QueueChannel _queueChannel;
     private readonly TaskCancellationManager _cancellationManager;
-    private readonly ILogger<DashboardModel> _logger; // ИСПРАВЛЕНО: Добавлено отсутствующее поле логгера
+    private readonly ILogger<DashboardModel> _logger;
+    private readonly UserService _userService;
 
     public DashboardModel(
         AppDbContext context,
         IWebHostEnvironment environment,
         QueueChannel queueChannel,
         TaskCancellationManager cancellationManager,
-        ILogger<DashboardModel> logger) // ИСПРАВЛЕНО: Инжектим логгер в конструктор
+        ILogger<DashboardModel> logger,
+        UserService userService)
     {
         _context = context;
         _environment = environment;
         _queueChannel = queueChannel;
         _cancellationManager = cancellationManager;
         _logger = logger;
+        _userService = userService;
     }
+
+    [BindProperty]
+    public string SubtitleFont { get; set; } = "Outfit";
+
+    [BindProperty]
+    public string FillStyle { get; set; } = "gradient";
+
+    [BindProperty]
+    public string PrimaryColor { get; set; } = "white";
+
+    [BindProperty]
+    public string SecondaryColor { get; set; } = "purple";
+
+    [BindProperty]
+    public string VideoFormat { get; set; } = "portrait";
 
     [BindProperty]
     public IFormFile? UploadedAudio { get; set; }
@@ -130,7 +149,7 @@ public class DashboardModel : PageModel
 
             dbBackgroundPath = Path.Combine("uploads", "backgrounds", uniqueBgName);
         }
-        else if (!string.IsNullOrEmpty(SelectedPresetBg))
+        else if (!string.IsNullOrEmpty(SelectedPresetBg) && SelectedPresetBg != "black")
         {
             var bgFolder = Path.Combine(_environment.WebRootPath, "uploads", "backgrounds");
             if (!Directory.Exists(bgFolder))
@@ -190,6 +209,11 @@ public class DashboardModel : PageModel
             Status = TaskStatus.InQueue,
             GeminiApiKey = this.AutoImproveEnabled ? this.GeminiApiKey : null,
             AutoImproveEnabled = this.AutoImproveEnabled,
+            SubtitleFont = this.SubtitleFont,
+            FillStyle = this.FillStyle,
+            PrimaryColor = this.PrimaryColor,
+            SecondaryColor = this.SecondaryColor,
+            VideoFormat = this.VideoFormat,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -352,6 +376,32 @@ public class DashboardModel : PageModel
                 break;
             }
         }
+    }
+
+    public class CreateUserRequest
+    {
+        public string Username { get; set; } = string.Empty;
+        public string Password { get; set; } = string.Empty;
+        public string Role { get; set; } = "User";
+    }
+
+    public async Task<IActionResult> OnPostCreateUserAsync([FromBody] CreateUserRequest request)
+    {
+        if (!User.IsInRole("Admin")) return Forbid();
+
+        if (request == null || string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
+        {
+            return BadRequest("Имя пользователя и пароль обязательны.");
+        }
+
+        var enumRole = request.Role == "Admin" ? Role.Admin : Role.User;
+        var created = await _userService.CreateUserAsync(request.Username, request.Password, enumRole);
+        if (!created)
+        {
+            return BadRequest("Пользователь с таким именем уже существует.");
+        }
+
+        return new JsonResult(new { success = true });
     }
 
     public async Task<IActionResult> OnGetAdminDataAsync()

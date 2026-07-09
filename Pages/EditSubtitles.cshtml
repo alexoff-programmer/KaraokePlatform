@@ -7,16 +7,16 @@
 <div class="container py-5">
     <div class="row justify-content-center">
         <div class="col-lg-8">
-            <div class="card border-0 shadow-sm rounded-4 p-4">
+            <div class="card glass-panel p-4">
                 <div class="d-flex align-items-center justify-content-between mb-1">
-                    <h2 class="fw-bold text-dark mb-0">Проверка распознанного текста</h2>
-                    <button type="button" class="btn btn-outline-primary btn-sm rounded-3 fw-bold px-3 py-2" data-bs-toggle="modal" data-bs-target="#geminiModal">
+                    <h2 class="fw-bold mb-0">Проверка распознанного текста</h2>
+                    <button type="button" class="btn btn-outline-primary btn-sm rounded-pill fw-bold px-3 py-2" data-bs-toggle="modal" data-bs-target="#geminiModal">
                         <i class="bi bi-magic me-1"></i> Улучшить с Gemini
                     </button>
                 </div>
-                <p class="text-muted mb-4">Файл: <span class="badge bg-secondary">@Model.OriginalFileName</span></p>
+                <p class="mb-4" style="color: var(--text-secondary);">Файл: <span class="badge bg-secondary bg-opacity-25 border" style="border-color: var(--border-color) !important; color: var(--text-secondary);">@Model.OriginalFileName</span></p>
 
-                <div class="alert alert-info small rounded-3">
+                <div class="alert alert-info border-0 shadow bg-info bg-opacity-10 text-info small rounded-4 p-3 mb-4">
                     <i class="bi bi-info-circle-fill me-2"></i> Исправьте опечатки, пропущенные буквы или разбейте слова
                     пробелами. Тайминги караоке автоматически подстроятся под новые слова внутри строки.
                 </div>
@@ -25,20 +25,20 @@
                     @Html.AntiForgeryToken()
                     <input type="hidden" asp-for="TaskId" id="taskIdHidden" />
 
-                    <div class="vstack gap-3 mb-4" style="max-height: 60vh; overflow-y: auto; padding-right: 10px;">
+                    <div class="vstack gap-3 mb-4" style="max-height: 50vh; overflow-y: auto; padding-right: 10px;">
                         @for (int i = 0; i < Model.EditedLines.Count; i++)
                         {
                             <div class="input-group">
-                                <span class="input-group-text bg-light text-muted small fw-bold">Строка @(i + 1)</span>
-                                <input type="text" asp-for="EditedLines[i]" class="form-control form-control-lg text-dark"
-                                       autocomplete="off" />
+                                <span class="input-group-text small fw-bold" style="background: var(--input-bg); border-color: var(--input-border); color: var(--text-secondary); border-radius: 24px 0 0 24px !important;">Строка @(i + 1)</span>
+                                <input type="text" asp-for="EditedLines[i]" class="form-control form-control-lg"
+                                       style="border-radius: 0 24px 24px 0 !important;" autocomplete="off" />
                             </div>
                         }
                     </div>
 
-                    <div class="d-flex gap-2">
-                        <a asp-page="/Dashboard" class="btn btn-light btn-lg rounded-3 flex-grow-1">Отмена</a>
-                        <button type="submit" class="btn btn-primary btn-lg rounded-3 flex-grow-1 fw-bold">
+                    <div class="d-flex gap-3">
+                        <a asp-page="/Dashboard" class="btn btn-gallery-adaptive btn-lg rounded-pill flex-grow-1">Отмена</a>
+                        <button type="submit" class="btn btn-primary btn-lg rounded-pill flex-grow-1 fw-bold">
                             <i class="bi bi-vector-pen me-2"></i>Утвердить и собрать видео
                         </button>
                     </div>
@@ -54,25 +54,25 @@
         <div class="modal-content border-0 shadow rounded-4">
             <div class="modal-header border-bottom-0">
                 <h5 class="modal-title fw-bold" id="geminiModalLabel"><i class="bi bi-magic me-2 text-primary"></i>Улучшение субтитров с Gemini</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body pb-4">
                 <div class="mb-3">
-                    <label for="geminiApiKey" class="form-label small fw-bold text-muted">Gemini API Key</label>
+                    <label for="geminiApiKey" class="form-label small fw-bold text-white-50">Gemini API Key</label>
                     <input type="password" id="geminiApiKey" class="form-control form-control-lg rounded-3" placeholder="AIzaSy..." autocomplete="off" />
-                    <div class="form-text small text-muted">Ключ сохраняется локально в вашем браузере.</div>
+                    <div class="form-text small text-white-50">Ключ сохраняется локально в вашем браузере.</div>
                 </div>
                 <div class="form-check form-switch mb-4">
                     <input class="form-check-input" type="checkbox" id="geminiAutoImprove" />
-                    <label class="form-check-label small fw-bold text-muted" for="geminiAutoImprove">Автоматическое улучшение при загрузке</label>
-                    <div class="form-text small text-muted">Если включено, новые песни будут автоматически улучшаться перед ручным редактированием.</div>
+                    <label class="form-check-label small fw-bold text-white-50" for="geminiAutoImprove">Автоматическое улучшение при загрузке</label>
+                    <div class="form-text small text-white-50">Если включено, новые песни будут автоматически улучшаться перед ручным редактированием.</div>
                 </div>
                 
                 <div class="vstack gap-2">
-                    <button type="button" id="btnRunGeminiImprovement" class="btn btn-primary btn-lg rounded-3 w-100 fw-bold">
+                    <button type="button" id="btnRunGeminiImprovement" class="btn btn-primary btn-lg rounded-pill w-100 fw-bold">
                         <i class="bi bi-play-circle me-2"></i>Запустить улучшение текста
                     </button>
-                    <button type="button" id="btnSaveGeminiSettings" class="btn btn-light btn-lg rounded-3 w-100">
+                    <button type="button" id="btnSaveGeminiSettings" class="btn btn-gallery-adaptive btn-lg rounded-pill w-100">
                         Сохранить настройки
                     </button>
                 </div>

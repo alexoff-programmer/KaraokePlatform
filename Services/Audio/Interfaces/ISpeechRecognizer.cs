@@ -10,5 +10,6 @@ public interface ISpeechRecognizer
         string wavPath,
         string language,
         Action<int> onProgress,
-        string? geminiApiKey = null);
+        string? geminiApiKey = null,
+        string? trackName = null);
 }

@@ -57,7 +57,8 @@ public class WhisperRecognizer : ISpeechRecognizer
         string wavPath,
         string language,
         Action<int> onProgress,
-        string? geminiApiKey = null)
+        string? geminiApiKey = null,
+        string? trackName = null)
     {
         if (!File.Exists(wavPath))
             throw new FileNotFoundException("Аудиофайл для транскрибации не найден", wavPath);
@@ -103,7 +104,7 @@ public class WhisperRecognizer : ISpeechRecognizer
         // Apply Gemini lyrics correction if API key is provided
         if (!string.IsNullOrEmpty(geminiApiKey))
         {
-            segments = await ImproveSegmentsWithGeminiAsync(segments, geminiApiKey);
+            segments = await ImproveSegmentsWithGeminiAsync(segments, geminiApiKey, trackName);
         }
 
         onProgress?.Invoke(75);
@@ -162,7 +163,8 @@ public class WhisperRecognizer : ISpeechRecognizer
 
     private async Task<List<(string Text, TimeSpan Start, TimeSpan End)>> ImproveSegmentsWithGeminiAsync(
         List<(string Text, TimeSpan Start, TimeSpan End)> segments,
-        string apiKey)
+        string apiKey,
+        string? trackName = null)
     {
         if (segments.Count == 0 || string.IsNullOrWhiteSpace(apiKey)) return segments;
 
@@ -171,8 +173,10 @@ public class WhisperRecognizer : ISpeechRecognizer
             var rawTexts = segments.Select(s => s.Text).ToList();
             var jsonInput = JsonSerializer.Serialize(rawTexts);
 
-            var promptText = "You are an expert lyrics editor. " +
-                             "Translate and correct the following raw voice recognition segments of a song into correct, grammatically clean lyrics. " +
+            var songTitle = string.IsNullOrEmpty(trackName) ? "Song" : trackName;
+            var promptText = $"You are an expert lyrics editor. Adapt the subtitles for the track '{songTitle}'.\n" +
+                             "If there is unintelligible English text written in Cyrillic letters (e.g. 'ай лав ю'), replace it with standard, grammatically correct English expressions ('I love you').\n" +
+                             "The text must be meaningful and correspond to the original song context.\n" +
                              "Keep the exact same number of elements in the output array as the input array. " +
                              "Do not combine or split segments. " +
                              "Return the output strictly in JSON format as an object containing the key \"corrected_segments\", which is an array of strings. " +
@@ -205,8 +209,8 @@ public class WhisperRecognizer : ISpeechRecognizer
             var requestJson = JsonSerializer.Serialize(requestBody);
             var content = new StringContent(requestJson, System.Text.Encoding.UTF8, "application/json");
 
-            // Call Gemini 1.5 Flash (standard fast Flash model with JSON mode support)
-            var url = $"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={apiKey}";
+            // Call Gemini 3.1 Flash-Lite (standard fast model with JSON mode support)
+            var url = $"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key={apiKey}";
             
             var response = await httpClient.PostAsync(url, content);
             if (!response.IsSuccessStatusCode)

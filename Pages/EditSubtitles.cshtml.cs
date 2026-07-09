@@ -66,7 +66,7 @@ public class EditSubtitlesModel : PageModel
         TaskId = taskId;
         var task = await _context.KaraokeTasks.FirstOrDefaultAsync(t => t.Id == taskId);
 
-        if (task == null || task.Status != KaraokeTaskStatus.AwaitingReview)
+        if (task == null || (task.Status != KaraokeTaskStatus.AwaitingReview && task.Status != KaraokeTaskStatus.Completed))
         {
             return RedirectToPage("/Dashboard");
         }
@@ -143,7 +143,7 @@ public class EditSubtitlesModel : PageModel
         var assFileName = $"{task.Id}.ass";
         var assOutputPath = Path.Combine(outputFolder, assFileName);
 
-        string assContent = _subtitleGenerator.GenerateKaraokeMarkup(finalWordsList);
+        string assContent = _subtitleGenerator.GenerateKaraokeMarkup(finalWordsList, task.SubtitleFont, task.FillStyle, task.PrimaryColor, task.SecondaryColor, task.VideoFormat);
         await System.IO.File.WriteAllTextAsync(assOutputPath, assContent, Encoding.UTF8);
 
         // 3. Обновляем JSON фраз в БД, чтобы зафиксировать правки текста
@@ -197,7 +197,8 @@ public class EditSubtitlesModel : PageModel
         ).ToList();
 
         // 2. Call Gemini for lyrics correction
-        var correctedLines = await ImproveLinesWithGeminiAsync(currentLines, request.GeminiApiKey);
+        string? trackTitle = task != null ? Path.GetFileNameWithoutExtension(task.OriginalFileName) : null;
+        var correctedLines = await ImproveLinesWithGeminiAsync(currentLines, request.GeminiApiKey, trackTitle);
 
         if (correctedLines.Count != originalPhrases.Count)
         {
@@ -205,8 +206,7 @@ public class EditSubtitlesModel : PageModel
         }
 
         // 3. Re-run force alignment on the audio for each line using the corrected text
-        string cleanAudioRelative = task.AudioFilePath.TrimStart('\\', '/');
-        string fullAudioPath = Path.Combine(_environment.WebRootPath, cleanAudioRelative);
+        string fullAudioPath = Path.Combine(_environment.WebRootPath, "output", $"{task.Id}_vocals.wav");
 
         if (!System.IO.File.Exists(fullAudioPath))
         {
@@ -337,14 +337,16 @@ public class EditSubtitlesModel : PageModel
         return redistributedWords;
     }
 
-    private async Task<List<string>> ImproveLinesWithGeminiAsync(List<string> currentLines, string apiKey)
+    private async Task<List<string>> ImproveLinesWithGeminiAsync(List<string> currentLines, string apiKey, string? trackName = null)
     {
         try
         {
             var jsonInput = JsonSerializer.Serialize(currentLines);
 
-            var promptText = "You are an expert lyrics editor. " +
-                             "Translate and correct the following raw voice recognition segments of a song into correct, grammatically clean lyrics. " +
+            var songTitle = string.IsNullOrEmpty(trackName) ? "Song" : trackName;
+            var promptText = $"You are an expert lyrics editor. Adapt the subtitles for the track '{songTitle}'.\n" +
+                             "If there is unintelligible English text written in Cyrillic letters (e.g. 'ай лав ю'), replace it with standard, grammatically correct English expressions ('I love you').\n" +
+                             "The text must be meaningful and correspond to the original song context.\n" +
                              "Keep the exact same number of elements in the output array as the input array. " +
                              "Do not combine or split segments. " +
                              "Return the output strictly in JSON format as an object containing the key \"corrected_segments\", which is an array of strings. " +
@@ -377,7 +379,7 @@ public class EditSubtitlesModel : PageModel
             var requestJson = JsonSerializer.Serialize(requestBody);
             var content = new StringContent(requestJson, System.Text.Encoding.UTF8, "application/json");
 
-            var url = $"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={apiKey}";
+            var url = $"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key={apiKey}";
             
             var response = await httpClient.PostAsync(url, content);
             if (!response.IsSuccessStatusCode)

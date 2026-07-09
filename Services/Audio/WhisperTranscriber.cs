@@ -57,11 +57,13 @@ public class WhisperTranscriber
             // 2. Отправляем отфильтрованный вокал напрямую в микросервис WhisperX
             var task = await _context.KaraokeTasks.FindAsync(taskId);
             string? geminiApiKey = task?.GeminiApiKey;
+            string? trackName = task != null ? Path.GetFileNameWithoutExtension(task.OriginalFileName) : null;
 
             var words = await _speechRecognizer.TranscribeAndMergeTokensAsync(
                 whisperVavPath, language,
                 p => onProgress.Invoke(25 + (p * 25 / 100)),
-                geminiApiKey);
+                geminiApiKey,
+                trackName);
 
             // 3. Группируем полученные слова в строчки караоке
             var generator = new AssSubtitleGenerator();

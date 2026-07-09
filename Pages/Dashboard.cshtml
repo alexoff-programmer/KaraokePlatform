@@ -31,9 +31,9 @@
         <input type="hidden" name="SelectedPresetBg" id="dashboardSelectedPresetBg" />
 
         <div class="row g-4 mb-5">
-            <!-- Left Panel: Configurator Accordion -->
+            <!-- Left Panel: Configurator Accordion (No h-100 to prevent layout collapse) -->
             <div class="col-lg-4">
-                <div class="card glass-panel p-4 h-100">
+                <div class="card glass-panel p-4">
                     <h5 class="fw-bold mb-3 text-white"><i class="bi bi-sliders me-2 text-primary"></i>Параметры генерации</h5>
                     <div class="accordion accordion-flush" id="configuratorAccordion">
                         <!-- Accordion 1: Source Files -->
@@ -44,7 +44,7 @@
                                 </button>
                             </h2>
                             <div id="collapseFiles" class="accordion-collapse collapse show" data-bs-parent="#configuratorAccordion">
-                                <div class="accordion-body pt-0 px-1">
+                                <div class="accordion-body pt-3 px-2">
                                     <div class="mb-3">
                                         <label class="form-label text-white-50 small">Аудиодорожка (MP3 / WAV)</label>
                                         <div class="dropzone-container" id="audioDropzone">
@@ -61,7 +61,7 @@
                                             <span class="small d-block text-white" id="bgFilenameText">Загрузить изображение или видео</span>
                                             <input asp-for="UploadedBackground" class="position-absolute top-0 start-0 opacity-0 w-100 h-100" style="cursor: pointer;" type="file" accept=".jpg,.jpeg,.png" id="bgFileInput" />
                                         </div>
-                                        <button type="button" class="btn btn-outline-light btn-sm rounded-pill w-100 border-opacity-25 mt-2" style="border: 1px solid rgba(255,255,255,0.15);" data-bs-toggle="modal" data-bs-target="#presetGalleryModal">
+                                        <button type="button" class="btn btn-gallery-adaptive btn-sm w-100 mt-2" data-bs-toggle="modal" data-bs-target="#presetGalleryModal">
                                             <i class="bi bi-images me-1"></i> Выбрать из галереи ИИ
                                         </button>
                                     </div>
@@ -77,7 +77,7 @@
                                 </button>
                             </h2>
                             <div id="collapseSettings" class="accordion-collapse collapse" data-bs-parent="#configuratorAccordion">
-                                <div class="accordion-body pt-0 px-1">
+                                <div class="accordion-body pt-3 px-2">
                                     <div class="mb-3">
                                         <label class="form-label text-white-50 small">Язык трека</label>
                                         <select asp-for="SelectedLanguage" id="configLanguage" class="form-select">
@@ -98,7 +98,7 @@
 
                                     <div class="mb-3">
                                         <label class="form-label text-white-50 small">Шрифт караоке</label>
-                                        <select id="configFont" class="form-select">
+                                        <select asp-for="SubtitleFont" id="configFont" class="form-select">
                                             <option value="Inter">Inter (Строгий)</option>
                                             <option value="Outfit">Outfit (Премиум)</option>
                                             <option value="Courier New">Neon Display (Моноширинный)</option>
@@ -107,9 +107,38 @@
 
                                     <div class="mb-3">
                                         <label class="form-label text-white-50 small">Анимация закрашивания</label>
-                                        <select id="configFillStyle" class="form-select">
+                                        <select asp-for="FillStyle" id="configFillStyle" class="form-select">
                                             <option value="gradient">Плавный градиент</option>
                                             <option value="classic">Классическая заливка</option>
+                                        </select>
+                                    </div>
+
+                                    <div class="mb-3">
+                                        <label class="form-label text-white-50 small">Основной цвет текста</label>
+                                        <select asp-for="PrimaryColor" id="configPrimaryColor" class="form-select">
+                                            <option value="white">⚪ Белый</option>
+                                            <option value="lightgray">🩶 Светло-серый</option>
+                                            <option value="cyan">🩵 Морской</option>
+                                            <option value="yellow">💛 Желтый</option>
+                                        </select>
+                                    </div>
+
+                                    <div class="mb-3">
+                                        <label class="form-label text-white-50 small">Цвет закрашивания (активный)</label>
+                                        <select asp-for="SecondaryColor" id="configSecondaryColor" class="form-select">
+                                            <option value="purple">💜 Фиолетовый</option>
+                                            <option value="red">❤️ Красный</option>
+                                            <option value="yellow">💛 Желтый</option>
+                                            <option value="green">💚 Зеленый</option>
+                                            <option value="cyan">🩵 Морской</option>
+                                        </select>
+                                    </div>
+
+                                    <div class="mb-3">
+                                        <label class="form-label text-white-50 small">Формат видео</label>
+                                        <select asp-for="VideoFormat" id="configVideoFormat" class="form-select">
+                                            <option value="portrait">📱 Вертикальный (1080×1920)</option>
+                                            <option value="landscape">🖥️ Горизонтальный (1920×1080)</option>
                                         </select>
                                     </div>
 
@@ -129,7 +158,7 @@
                                 </button>
                             </h2>
                             <div id="collapseGemini" class="accordion-collapse collapse" data-bs-parent="#configuratorAccordion">
-                                <div class="accordion-body pt-0 px-1 text-center py-3">
+                                <div class="accordion-body pt-3 px-2">
                                     <p class="small text-white-50 mb-3" id="geminiStatusLabel">Статус: Выключено (нет API ключа)</p>
                                     <button type="button" class="btn btn-outline-primary btn-sm rounded-pill w-100" data-bs-toggle="modal" data-bs-target="#geminiConfigModal">
                                         <i class="bi bi-gear-fill me-1"></i> Конфигурация Gemini
@@ -141,12 +170,12 @@
                 </div>
             </div>
 
-            <!-- Center Column: Interactive Preview -->
+            <!-- Center Column: Interactive Preview (Aspect ratio constraints to prevent overlap) -->
             <div class="col-lg-8">
-                <div class="card glass-panel p-4 h-100 d-flex flex-column justify-content-between">
+                <div class="card glass-panel p-4 d-flex flex-column justify-content-between">
                     <h5 class="fw-bold mb-3 text-white"><i class="bi bi-eye me-2 text-info"></i>Интерактивное превью караоке</h5>
                     
-                    <div class="player-preview-container flex-grow-1 mb-4 d-flex align-items-center justify-content-center">
+                    <div class="player-preview-container mb-4 d-flex align-items-center justify-content-center">
                         <img src="/images/presets/preset_cyberpunk.png" id="playerBgImage" class="player-preview-bg preset-card-cyberpunk" />
                         <div class="player-preview-overlay">
                             <div class="preview-subtitle-line text-white" id="previewSubLine1">
@@ -168,21 +197,21 @@
 
     <!-- Active Generations Card -->
     <div class="card glass-panel p-4 rounded-4 mt-4">
-        <h5 class="fw-bold text-white mb-4"><i class="bi bi-grid-3x3-gap me-2 text-warning"></i>Мои генерации</h5>
+        <h5 class="fw-bold mb-4"><i class="bi bi-grid-3x3-gap me-2" style="color: #a855f7;"></i>Мои генерации</h5>
 
         @if (!Model.UserTasks.Any())
         {
-            <div class="text-center py-5 text-muted">
+            <div class="text-center py-5">
                 <i class="bi bi-music-note-beamed display-4 mb-3 d-block text-secondary opacity-50"></i>
-                <p class="mb-0">Вы еще не загрузили ни одного трека.</p>
+                <p class="mb-0 no-tracks-placeholder">Вы еще не загрузили ни одного трека.</p>
             </div>
         }
         else
         {
             <div class="table-responsive">
-                <table class="table table-dark table-hover align-middle border-0 text-white" style="table-layout: fixed; width: 100%;">
+                <table class="table table-hover align-middle border-0" style="table-layout: fixed; width: 100%;">
                     <thead>
-                        <tr class="text-white-50 border-bottom border-light-subtle">
+                        <tr class="border-bottom border-light-subtle">
                             <th style="width: 35%">Файл</th>
                             <th style="width: 20%">Дата</th>
                             <th style="width: 25%">Статус</th>
@@ -207,10 +236,10 @@
                                         <div class="processing-container">
                                             <div class="d-flex align-items-center text-warning small mb-1 text-nowrap">
                                                 <div class="spinner-border spinner-border-sm me-2 flex-shrink-0" role="status"></div>
-                                                <span class="processing-text">Обработка...</span>
+                                                <span class="processing-text">Обработка @(task.Progress > 0 ? task.Progress : 10)%</span>
                                             </div>
                                             <div class="progress" style="height: 4px; background-color: rgba(255,255,255,0.08);">
-                                                <div class="progress-bar progress-bar-striped progress-bar-animated bg-warning" role="progressbar" style="width: 10%"></div>
+                                                <div class="progress-bar progress-bar-striped progress-bar-animated bg-warning" role="progressbar" style="width: @(task.Progress > 0 ? task.Progress : 10)%"></div>
                                             </div>
                                         </div>
                                     }
@@ -238,32 +267,35 @@
                                         @if (task.Status == KaraokeTaskStatus.Completed && !string.IsNullOrEmpty(task.VideoFilePath))
                                         {
                                             var downloadName = System.IO.Path.GetFileNameWithoutExtension(task.OriginalFileName) + ".mp4";
-                                            <a href="/@task.VideoFilePath" class="btn btn-sm btn-outline-success rounded-pill px-3" download="@downloadName">
+                                            <a href="/@task.VideoFilePath" class="btn btn-action-glass" download="@downloadName">
                                                 <i class="bi bi-download me-1"></i>MP4
+                                            </a>
+                                            <a href="/EditSubtitles?taskId=@task.Id" class="btn btn-action-glass" style="color: #ffc107 !important; border-color: rgba(255, 193, 7, 0.3) !important;">
+                                                <i class="bi bi-pencil-square me-1"></i>Изменить
                                             </a>
                                         }
                                         else if (task.Status == KaraokeTaskStatus.AwaitingReview)
                                         {
-                                            <a href="/EditSubtitles?taskId=@task.Id" class="btn btn-sm btn-warning text-dark fw-bold rounded-pill px-3">
+                                            <a href="/EditSubtitles?taskId=@task.Id" class="btn btn-action-glass" style="color: #ffc107 !important; border-color: rgba(255, 193, 7, 0.3) !important;">
                                                 <i class="bi bi-keyboard me-1"></i>Текст
                                             </a>
                                         }
                                         else if (task.Status == KaraokeTaskStatus.Processing)
                                         {
-                                            <button class="btn btn-sm btn-outline-light rounded-pill border-opacity-25" disabled>
+                                            <button class="btn btn-action-glass" disabled>
                                                 <i class="bi bi-cpu"></i>
                                             </button>
                                         }
                                         else
                                         {
-                                            <button class="btn btn-sm btn-outline-light rounded-pill border-opacity-25" disabled>
+                                            <button class="btn btn-action-glass" disabled>
                                                 <i class="bi bi-dash-lg"></i>
                                             </button>
                                         }
 
                                         <form method="post" action="/Dashboard?handler=Delete&taskId=@task.Id" onsubmit="return confirm('Вы уверены, что хотите прервать обработку и удалить файлы?');" class="d-inline m-0">
                                             @Html.AntiForgeryToken()
-                                            <button type="submit" class="btn btn-sm btn-outline-danger rounded-pill"><i class="bi bi-trash"></i></button>
+                                            <button type="submit" class="btn btn-action-danger-glass"><i class="bi bi-trash"></i></button>
                                         </form>
                                     </div>
                                 </td>
@@ -279,7 +311,7 @@
 <!-- Modal 1: Neural Background presets Gallery -->
 <div class="modal fade" id="presetGalleryModal" tabindex="-1" aria-labelledby="galleryLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-lg">
-        <div class="modal-content border-0 shadow rounded-4 text-white bg-dark">
+        <div class="modal-content border-0 shadow rounded-4">
             <div class="modal-header border-bottom-0 pb-0">
                 <h5 class="modal-title fw-bold" id="galleryLabel"><i class="bi bi-images text-info me-2"></i>Галерея абстрактных фонов ИИ</h5>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
@@ -287,6 +319,18 @@
             <div class="modal-body pb-4">
                 <p class="small text-white-50 mb-4">Выберите один из готовых художественных шаблонов для генерации видео.</p>
                 <div class="row row-cols-1 row-cols-md-3 g-3">
+                    <!-- Plain Black Preset Choice -->
+                    <div class="col">
+                        <div class="card bg-transparent border-light border-opacity-10 rounded-4 overflow-hidden preset-choice-card cursor-pointer" onclick="selectPreset('black')">
+                            <div class="d-flex align-items-center justify-content-center bg-black border-bottom border-light border-opacity-10" style="height: 120px;">
+                                <i class="bi bi-x-circle text-muted display-6"></i>
+                            </div>
+                            <div class="card-body p-3">
+                                <h6 class="fw-bold text-white mb-1 small">Черный фон</h6>
+                                <span class="text-white-50 small" style="font-size: 0.75rem;">Без фонового изображения</span>
+                            </div>
+                        </div>
+                    </div>
                     <div class="col">
                         <div class="card bg-transparent border-light border-opacity-10 rounded-4 overflow-hidden preset-choice-card cursor-pointer" onclick="selectPreset('preset_cyberpunk')">
                             <img src="/images/presets/preset_cyberpunk.png" class="card-img-top preset-card-cyberpunk" style="height: 120px; object-fit: cover;" />
@@ -350,7 +394,7 @@
 <!-- Modal 2: Gemini Config Modal -->
 <div class="modal fade" id="geminiConfigModal" tabindex="-1" aria-labelledby="geminiConfigModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content border-0 shadow rounded-4 bg-dark text-white">
+        <div class="modal-content border-0 shadow rounded-4">
             <div class="modal-header border-bottom-0 pb-0">
                 <h5 class="modal-title fw-bold" id="geminiConfigModalLabel"><i class="bi bi-magic me-2 text-primary"></i>Настройки Gemini ИИ</h5>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
@@ -426,7 +470,7 @@
                 actionCell.innerHTML = `
                     <div class="d-flex justify-content-end align-items-center gap-2">
                         <form method="post" action="/Dashboard?handler=Delete&taskId=${taskId}" onsubmit="return confirm('Прервать обработку и удалить файлы?');" class="d-inline m-0">
-                            <button type="submit" class="btn btn-sm btn-outline-danger rounded-pill"><i class="bi bi-trash"></i></button>
+                            <button type="submit" class="btn btn-action-danger-glass"><i class="bi bi-trash"></i></button>
                         </form>
                     </div>`;
             }
@@ -434,11 +478,11 @@
                 statusCell.innerHTML = `<span class="text-info small text-nowrap"><i class="bi bi-pencil-square me-1"></i>Ожидает проверки</span>`;
                 actionCell.innerHTML = `
                     <div class="d-flex justify-content-end align-items-center gap-2">
-                        <a href="/EditSubtitles?taskId=${taskId}" class="btn btn-sm btn-warning text-dark fw-bold rounded-pill px-3">
+                        <a href="/EditSubtitles?taskId=${taskId}" class="btn btn-action-glass" style="color: #ffc107 !important; border-color: rgba(255, 193, 7, 0.3) !important;">
                             <i class="bi bi-keyboard me-1"></i>Текст
                         </a>
                         <form method="post" action="/Dashboard?handler=Delete&taskId=${taskId}" onsubmit="return confirm('Вы уверены, что хотите удалить эту генерацию?');" class="d-inline m-0">
-                            <button type="submit" class="btn btn-sm btn-outline-danger rounded-pill"><i class="bi bi-trash"></i></button>
+                            <button type="submit" class="btn btn-action-danger-glass"><i class="bi bi-trash"></i></button>
                         </form>
                     </div>`;
             }
@@ -457,25 +501,28 @@
 
                 actionCell.innerHTML = `
                     <div class="d-flex justify-content-end align-items-center gap-2">
-                        <a href="/${videoUrl}" class="btn btn-sm btn-outline-success rounded-pill px-3" download="${downloadName}">
+                        <a href="/${videoUrl}" class="btn btn-action-glass" download="${downloadName}">
                             <i class="bi bi-download me-1"></i>MP4
                         </a>
+                        <a href="/EditSubtitles?taskId=${taskId}" class="btn btn-action-glass" style="color: #ffc107 !important; border-color: rgba(255, 193, 7, 0.3) !important;">
+                            <i class="bi bi-pencil-square me-1"></i>Изменить
+                        </a>
                         <form method="post" action="/Dashboard?handler=Delete&taskId=${taskId}" onsubmit="return confirm('Вы уверены, что хотите удалить эту генерацию?');" class="d-inline m-0">
-                            <button type="submit" class="btn btn-sm btn-outline-danger rounded-pill"><i class="bi bi-trash"></i></button>
+                            <button type="submit" class="btn btn-action-danger-glass"><i class="bi bi-trash"></i></button>
                         </form>
                     </div>`;
 
-                row.classList.add("table-success");
-                setTimeout(() => row.classList.remove("table-success"), 2500);
+                row.classList.add("table-row-flash-success");
+                setTimeout(() => row.classList.remove("table-row-flash-success"), 2500);
             }
             else if (status === "Failed") {
                 statusCell.innerHTML = `<span class="text-danger small"><i class="bi bi-exclamation-triangle-fill me-1"></i>Ошибка</span>`;
 
                 actionCell.innerHTML = `
                     <div class="d-flex justify-content-end align-items-center gap-2">
-                        <button class="btn btn-sm btn-light rounded-pill text-muted border-opacity-25" disabled><i class="bi bi-dash-lg"></i></button>
+                        <button class="btn btn-action-glass" disabled><i class="bi bi-dash-lg"></i></button>
                         <form method="post" action="/Dashboard?handler=Delete&taskId=${taskId}" onsubmit="return confirm('Вы уверены, что хотите удалить эту генерацию?');" class="d-inline m-0">
-                            <button type="submit" class="btn btn-sm btn-outline-danger rounded-pill"><i class="bi bi-trash"></i></button>
+                            <button type="submit" class="btn btn-action-danger-glass"><i class="bi bi-trash"></i></button>
                         </form>
                     </div>`;
             }
@@ -523,50 +570,121 @@
         function applyBackgroundPreset(presetName) {
             const cleanName = presetName.replace('.png', '');
             const img = document.getElementById('playerBgImage');
-            img.src = `/images/presets/${cleanName}.png`;
-            img.className = `player-preview-bg preset-card-${cleanName}`;
             
-            document.getElementById('dashboardSelectedPresetBg').value = cleanName + '.png';
-            localStorage.setItem('SelectedPresetBg', cleanName + '.png');
+            if (cleanName === 'black') {
+                img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+                img.className = 'player-preview-bg bg-black';
+                document.getElementById('dashboardSelectedPresetBg').value = 'black';
+                localStorage.setItem('SelectedPresetBg', 'black');
+            } else {
+                img.src = `/images/presets/${cleanName}.png`;
+                img.className = `player-preview-bg preset-card-${cleanName}`;
+                document.getElementById('dashboardSelectedPresetBg').value = cleanName + '.png';
+                localStorage.setItem('SelectedPresetBg', cleanName + '.png');
+            }
 
             bgFileInput.value = '';
             bgFilenameText.innerText = "Загрузить изображение или видео";
             bgFilenameText.classList.remove('text-info');
+
+            // Apply selected visual feedback borders in modal
+            const cards = document.querySelectorAll('.preset-choice-card');
+            cards.forEach(c => {
+                c.classList.remove('selected');
+                const isBlackCard = c.querySelector('.bg-black') !== null;
+                const imgEl = c.querySelector('img');
+                
+                if (cleanName === 'black' && isBlackCard) {
+                    c.classList.add('selected');
+                } else if (imgEl && imgEl.src.includes(cleanName) && cleanName !== 'black') {
+                    c.classList.add('selected');
+                }
+            });
         }
 
         // Live visual subtitle settings updates
         const fontSelect = document.getElementById('configFont');
         const fillSelect = document.getElementById('configFillStyle');
+        const priColorSelect = document.getElementById('configPrimaryColor');
+        const secColorSelect = document.getElementById('configSecondaryColor');
+        const formatSelect = document.getElementById('configVideoFormat');
+        const previewContainer = document.querySelector('.player-preview-container');
 
-        function applyFontAndStylePreview(font, fill) {
+        function applyFontAndStylePreview(font, fill, priCol, secCol) {
             const line1 = document.getElementById('previewSubLine1');
             const line2 = document.getElementById('previewSubLine2');
             
             if (line1 && line2) {
                 line1.style.fontFamily = font;
                 line2.style.fontFamily = font;
+
+                const cssPri = {
+                    white: '#ffffff',
+                    lightgray: '#d3d3d3',
+                    cyan: '#00ffff',
+                    yellow: '#ffff00'
+                }[priCol] || '#ffffff';
+
+                const cssSec = {
+                    purple: '#a855f7',
+                    red: '#ef4444',
+                    yellow: '#eab308',
+                    green: '#22c55e',
+                    cyan: '#06b6d4'
+                }[secCol] || '#a855f7';
+
+                line1.style.color = cssPri;
+                line2.style.color = cssPri;
                 
                 if (fill === 'gradient') {
-                    line1.style.textShadow = '0 2px 4px rgba(0,0,0,0.8), 0 0 20px rgba(168, 85, 247, 0.5)';
-                    line1.style.color = '#fff';
-                    line1.innerHTML = 'Я люблю этот <span style="background: linear-gradient(90deg, #a855f7, #6366f1); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 800;">красивый</span> караоке плеер';
+                    line1.style.textShadow = `0 2px 4px rgba(0,0,0,0.8), 0 0 20px ${cssSec}80`;
+                    line1.innerHTML = `Я люблю этот <span class="karaoke-sweep-demo" style="--sweep-col:${cssSec}; font-weight: 800;">красивый</span> плеер`;
                 } else {
                     line1.style.textShadow = '0 2px 4px rgba(0,0,0,0.9)';
-                    line1.style.color = '#bc8bf8';
-                    line1.innerHTML = 'Я люблю этот красивый караоке плеер';
+                    line1.innerHTML = `Я люблю этот <span style="color: ${cssSec}; font-weight: 800;">красивый</span> караоке плеер`;
                 }
             }
         }
 
         fontSelect.addEventListener('change', () => {
             localStorage.setItem('SubtitleFont', fontSelect.value);
-            applyFontAndStylePreview(fontSelect.value, fillSelect.value);
+            applyFontAndStylePreview(fontSelect.value, fillSelect.value, priColorSelect.value, secColorSelect.value);
         });
 
         fillSelect.addEventListener('change', () => {
             localStorage.setItem('AnimationFillStyle', fillSelect.value);
-            applyFontAndStylePreview(fontSelect.value, fillSelect.value);
+            applyFontAndStylePreview(fontSelect.value, fillSelect.value, priColorSelect.value, secColorSelect.value);
         });
+
+        priColorSelect.addEventListener('change', () => {
+            localStorage.setItem('PrimaryColor', priColorSelect.value);
+            applyFontAndStylePreview(fontSelect.value, fillSelect.value, priColorSelect.value, secColorSelect.value);
+        });
+
+        secColorSelect.addEventListener('change', () => {
+            localStorage.setItem('SecondaryColor', secColorSelect.value);
+            applyFontAndStylePreview(fontSelect.value, fillSelect.value, priColorSelect.value, secColorSelect.value);
+        });
+
+        function applyVideoFormatPreview(fmt) {
+            if (!previewContainer) return;
+            if (fmt === 'landscape') {
+                previewContainer.style.aspectRatio = '16/9';
+                previewContainer.style.maxHeight = '280px';
+                previewContainer.style.maxWidth = '100%';
+            } else {
+                previewContainer.style.aspectRatio = '9/16';
+                previewContainer.style.maxHeight = '420px';
+                previewContainer.style.maxWidth = '240px';
+            }
+        }
+
+        if (formatSelect) {
+            formatSelect.addEventListener('change', () => {
+                localStorage.setItem('VideoFormat', formatSelect.value);
+                applyVideoFormatPreview(formatSelect.value);
+            });
+        }
 
         // Config persistence loaders
         const langSelect = document.getElementById('configLanguage');
@@ -585,6 +703,9 @@
                 quality: localStorage.getItem('SelectedQuality') || 'medium',
                 font: localStorage.getItem('SubtitleFont') || 'Outfit',
                 fill: localStorage.getItem('AnimationFillStyle') || 'gradient',
+                priColor: localStorage.getItem('PrimaryColor') || 'white',
+                secColor: localStorage.getItem('SecondaryColor') || 'purple',
+                videoFormat: localStorage.getItem('VideoFormat') || 'portrait',
                 removeVocal: localStorage.getItem('RemoveVocal') !== 'false',
                 preset: localStorage.getItem('SelectedPresetBg') || 'preset_cyberpunk.png'
             };
@@ -601,11 +722,15 @@
             qualSelect.value = config.quality;
             fontSelect.value = config.font;
             fillSelect.value = config.fill;
+            priColorSelect.value = config.priColor;
+            secColorSelect.value = config.secColor;
             vocalSwitch.checked = config.removeVocal;
+            if (formatSelect) formatSelect.value = config.videoFormat;
 
             applyBackgroundPreset(config.preset);
             updateGeminiStatusLabel(config.apiKey, config.autoImprove);
-            applyFontAndStylePreview(config.font, config.fill);
+            applyFontAndStylePreview(config.font, config.fill, config.priColor, config.secColor);
+            applyVideoFormatPreview(config.videoFormat);
         }
 
         function updateGeminiStatusLabel(key, auto) {

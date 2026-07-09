@@ -24,12 +24,22 @@ public class AssSubtitleGenerator : ISubtitleGenerator
     // Регулярное выражение находит любые знаки препинания в начале или конце строки, ИГНОРИРУЯ дефисы и апострофы внутри слова
     private static readonly Regex PunctuationCleanRegex = new Regex(@"(^[\p{P}&&[^\-']]+)|([\p{P}&&[^\-']]+$)", RegexOptions.Compiled);
 
-    public string GenerateKaraokeMarkup(List<WordTimeInfo> words)
+    // Maps UI font names to system-installed font names in the Docker container
+    private static string MapFontName(string? uiFont) => uiFont switch
+    {
+        "Inter" => "Open Sans",
+        "Outfit" => "Open Sans",
+        "Courier New" => "DejaVu Sans Mono",
+        "Montserrat" => "Open Sans",
+        _ => "Open Sans"
+    };
+
+    public string GenerateKaraokeMarkup(List<WordTimeInfo> words, string? fontName = null, string? fillStyle = null, string? primaryColor = null, string? secondaryColor = null, string? videoFormat = null)
     {
         if (words == null || words.Count == 0) return string.Empty;
 
         var sb = new StringBuilder();
-        BuildAssHeader(sb);
+        BuildAssHeader(sb, fontName, fillStyle, primaryColor, secondaryColor, videoFormat);
 
         var phrases = GroupWordsIntoPhrases(words);
         ExtendPhraseEnds(phrases);
@@ -38,18 +48,40 @@ public class AssSubtitleGenerator : ISubtitleGenerator
         return sb.ToString();
     }
 
-    private void BuildAssHeader(StringBuilder sb)
+    private void BuildAssHeader(StringBuilder sb, string? fontName = null, string? fillStyle = null, string? primaryColor = null, string? secondaryColor = null, string? videoFormat = null)
     {
+        var font = MapFontName(fontName);
+        bool isLandscape = videoFormat == "landscape";
+        int resX = isLandscape ? 1920 : 1080;
+        int resY = isLandscape ? 1080 : 1920;
+        int fontSize = isLandscape ? 52 : 68;
+        
+        var priCol = primaryColor switch
+        {
+            "lightgray" => "&H00D3D3D3",
+            "cyan" => "&H00FFFF00",
+            "yellow" => "&H0000FFFF",
+            _ => "&H00FFFFFF" // Default white
+        };
+
+        var activeColor = secondaryColor switch
+        {
+            "red" => "&H000000FF",
+            "yellow" => "&H0000FFFF",
+            "green" => "&H0000FF00",
+            "cyan" => "&H00FFFF00",
+            _ => "&H00F04CFF" // Default purple
+        };
+
         sb.AppendLine("[Script Info]");
         sb.AppendLine("ScriptType: v4.00+");
-        sb.AppendLine("PlayResX: 1080");
-        sb.AppendLine("PlayResY: 1920");
+        sb.AppendLine($"PlayResX: {resX}");
+        sb.AppendLine($"PlayResY: {resY}");
         sb.AppendLine("WrapStyle: 0");
         sb.AppendLine();
         sb.AppendLine("[V4+ Styles]");
         sb.AppendLine("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding");
-        // Изменен размер шрифта с 90 до 68 для размещения двух строк по 40 символов
-        sb.AppendLine("Style: KaraokeStyle,Montserrat,68,&H00FFFFFF,&H0000FFFF,&H00000000,&H00000000,-1,0,0,0,100,100,2,0,1,2,0,5,100,100,0,1");
+        sb.AppendLine($"Style: KaraokeStyle,{font},{fontSize},{priCol},{activeColor},&H00000000,&H00000000,-1,0,0,0,100,100,2,0,1,2,0,5,100,100,0,1");
         sb.AppendLine();
         sb.AppendLine("[Events]");
         sb.AppendLine("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text");

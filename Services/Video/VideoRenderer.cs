@@ -15,14 +15,20 @@ public class VideoRenderer
         _fontsFolder = Path.Combine(environment.ContentRootPath, "Fonts");
     }
 
-    // ИСПРАВЛЕНО: Добавили параметр backgroundImagePath в метод
-    public async Task RenderKaraokeVideoAsync(string audioPath, string assSubtitlesPath, string outputVideoPath, string? backgroundImagePath = null)
+    // ИСПРАВЛЕНО: Добавили параметры backgroundImagePath и videoFormat в метод
+    public async Task RenderKaraokeVideoAsync(string audioPath, string assSubtitlesPath, string outputVideoPath, string? backgroundImagePath = null, string? videoFormat = null)
     {
         if (!File.Exists(audioPath)) throw new FileNotFoundException("Исходный аудиофайл не найден.");
         if (!File.Exists(assSubtitlesPath)) throw new FileNotFoundException("Файл субтитров не найден.");
 
+        bool isLandscape = videoFormat == "landscape";
+        int videoW = isLandscape ? 1920 : 1080;
+        int videoH = isLandscape ? 1080 : 1920;
+
         // Экранируем пути для FFmpeg фильтра subtitles
         string escapedAssPath = assSubtitlesPath.Replace("\\", "/").Replace(":", "\\:");
+        // Путь к системным шрифтам для libass
+        string fontsDir = "/usr/share/fonts";
 
         double audioDurationSeconds;
         audioDurationSeconds = await GetAudioDurationAsync(audioPath);
@@ -33,22 +39,23 @@ public class VideoRenderer
 
         if (!hasBgImage)
         {
-            // ВАРИАНТ 1: Просто черный фон (чистый, без лишних фильтров)
-            arguments = $"-f lavfi -t {durationStr} -i \"color=c=black:s=1080x1920:r=30\" " +
+            // ВАРИАНТ 1: Просто чёрный фон
+            arguments = $"-f lavfi -t {durationStr} -i \"color=c=black:s={videoW}x{videoH}:r=30\" " +
                         $"-i \"{audioPath}\" " +
                         $"-filter_complex \"" +
-                        $"[0:v]subtitles=filename='{escapedAssPath}'[outv]\" " +
+                        $"[0:v]subtitles=filename='{escapedAssPath}':fontsdir='{fontsDir}'[outv]\" " +
                         $"-map \"[outv]\" -map 1:a " +
                         $"-c:v libx264 -preset ultrafast -profile:v high -level:v 4.1 -pix_fmt yuv420p -crf 23 -c:a aac -y \"{outputVideoPath}\"";
         }
         else
         {
-            // ВАРИАНТ 2: Своя картинка на фоне с умным масштабированием под 1080x1920
+            // ВАРИАНТ 2: Картинка на фоне — кадрируем и масштабируем чтобы заполнить весь экран (crop-fill)
             arguments = $"-loop 1 -t {durationStr} -i \"{backgroundImagePath}\" " +
                         $"-i \"{audioPath}\" " +
                         $"-filter_complex \"" +
-                        $"[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black," +
-                        $"subtitles=filename='{escapedAssPath}'[outv]\" " +
+                        $"[0:v]scale={videoW}:{videoH}:force_original_aspect_ratio=increase," +
+                        $"crop={videoW}:{videoH}," +
+                        $"subtitles=filename='{escapedAssPath}':fontsdir='{fontsDir}'[outv]\" " +
                         $"-map \"[outv]\" -map 1:a " +
                         $"-c:v libx264 -preset ultrafast -profile:v high -level:v 4.1 -pix_fmt yuv420p -crf 23 -c:a aac -y \"{outputVideoPath}\"";
         }
@@ -63,7 +70,7 @@ public class VideoRenderer
             CreateNoWindow = true
         };
 
-        // Настройки шрифтов для libass
+        // Настройки шрифтов для libass (fallback на локальную папку Fonts/)
         startInfo.EnvironmentVariables["FONTCONFIG_FILE"] = Path.Combine(_fontsFolder, "fonts.conf");
         startInfo.EnvironmentVariables["FC_CONFIG_DIR"] = _fontsFolder;
 

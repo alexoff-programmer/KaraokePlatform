@@ -1,29 +1,30 @@
 <!DOCTYPE html>
-<html lang="en">
-
+<html lang="ru" data-theme="dark">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>@ViewData["Title"] - KaraokePlatform</title>
-    <script type="importmap"></script>
+    <title>@ViewData["Title"] - karaoke.platform</title>
     <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
+    
+    <!-- Outfit & Inter Fonts + Bootstrap Icons CDNs -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/KaraokePlatform.styles.css" asp-append-version="true" />
 </head>
-
 <body>
     <header>
-        <nav class="navbar navbar-expand-sm navbar-dark border-bottom border-light-subtle bg-transparent py-3">
+        <nav class="navbar navbar-expand-sm navbar-dark border-bottom border-light-subtle py-3 bg-transparent">
             <div class="container">
-                <a class="navbar-brand text-lowercase fw-bold" asp-area="" asp-page="/Index" style="font-family: 'Outfit', 'Google Sans', 'Inter', sans-serif; font-size: 1.5rem; letter-spacing: -0.5px; color: #fff !important;">
-                    karaoke<span style="color: #a855f7;">.</span>platform
+                <a class="navbar-brand fw-bold text-white d-flex align-items-center gap-2" asp-page="/Index" style="font-size: 1.5rem; letter-spacing: -0.5px;">
+                    <span class="bg-primary bg-opacity-25 p-2 rounded-3 text-primary d-inline-flex" style="box-shadow: 0 0 15px rgba(168, 85, 247, 0.4);"><i class="bi bi-music-note-list"></i></span>
+                    <span>karaoke.platform</span>
                 </a>
-                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target=".navbar-collapse"
-                        aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target=".navbar-collapse" aria-controls="navbarSupportedContent"
+                        aria-expanded="false" aria-label="Toggle navigation">
                     <span class="navbar-toggler-icon"></span>
                 </button>
                 <div class="navbar-collapse collapse d-sm-inline-flex justify-content-between">
@@ -33,14 +34,19 @@
                         </li>
                     </ul>
 
-                    @if (User.Identity?.IsAuthenticated == true)
-                    {
-                        <div class="d-flex align-items-center gap-3">
-                            <span class="text-white-50 small">Вы вошли как: <strong class="text-white">@User.Identity.Name</strong></span>
+                    <div class="d-flex align-items-center gap-3 ms-auto">
+                        <!-- Universal Theme Switcher Button -->
+                        <button type="button" class="btn btn-sm btn-outline-light rounded-pill px-3 py-1 bg-transparent border-opacity-25" id="themeToggleBtn" style="border: 1px solid rgba(255,255,255,0.25);">
+                            <i class="bi bi-sun-fill" id="themeToggleIcon"></i>
+                        </button>
+
+                        @if (User.Identity?.IsAuthenticated == true)
+                        {
+                            <span class="text-white-50 small d-none d-md-inline">Вы вошли как: <strong class="text-white">@User.Identity.Name</strong></span>
                             
                             @if (User.IsInRole("Admin"))
                             {
-                                <button type="button" class="btn btn-sm btn-outline-light rounded-pill px-3 py-1 bg-transparent border-opacity-25" id="adminSidebarToggle" style="border: 1px solid rgba(255,255,255,0.25); color: #fff;">
+                                <button type="button" class="btn btn-sm btn-outline-light rounded-pill px-3 py-1 bg-transparent border-opacity-25" id="adminSidebarToggle" style="border: 1px solid rgba(255,255,255,0.25);">
                                     <i class="bi bi-gear-fill me-1"></i> Панель управления
                                 </button>
                             }
@@ -50,8 +56,8 @@
                                     Выйти
                                 </button>
                             </form>
-                        </div>
-                    }
+                        }
+                    </div>
                 </div>
             </div>
         </nav>
@@ -79,6 +85,9 @@
 
         <!-- Admin Sidebar Panel -->
         <div id="adminSidebar" class="admin-sidebar glass-panel">
+            <!-- Token generator to guarantee verification checks on all child pages -->
+            @Html.AntiForgeryToken()
+
             <div class="d-flex align-items-center justify-content-between mb-4 border-bottom border-light-subtle pb-3">
                 <h4 class="fw-bold m-0 text-white"><i class="bi bi-shield-lock text-primary me-2"></i>Панель управления</h4>
                 <button type="button" class="btn-close btn-close-white" id="adminSidebarClose" aria-label="Close"></button>
@@ -87,13 +96,13 @@
             <!-- Tabs Navigation -->
             <ul class="nav nav-tabs border-light-subtle mb-3" id="adminTabs" role="tablist">
                 <li class="nav-item" role="presentation">
-                    <button class="nav-link active text-white bg-transparent border-0 border-bottom border-primary border-2" id="monitoring-tab" data-bs-toggle="tab" data-bs-target="#monitoring-content" type="button" role="tab">Мониторинг</button>
+                    <button class="nav-link active" id="monitoring-tab" data-bs-toggle="tab" data-bs-target="#monitoring-content" type="button" role="tab">Мониторинг</button>
                 </li>
                 <li class="nav-item" role="presentation">
-                    <button class="nav-link text-white-50 bg-transparent border-0" id="queue-tab" data-bs-toggle="tab" data-bs-target="#queue-content" type="button" role="tab">Очередь</button>
+                    <button class="nav-link" id="queue-tab" data-bs-toggle="tab" data-bs-target="#queue-content" type="button" role="tab">Очередь</button>
                 </li>
                 <li class="nav-item" role="presentation">
-                    <button class="nav-link text-white-50 bg-transparent border-0" id="users-tab" data-bs-toggle="tab" data-bs-target="#users-content" type="button" role="tab">Пользователи</button>
+                    <button class="nav-link" id="users-tab" data-bs-toggle="tab" data-bs-target="#users-content" type="button" role="tab">Пользователи</button>
                 </li>
             </ul>
 
@@ -134,8 +143,30 @@
 
                 <!-- Users Tab -->
                 <div class="tab-pane fade" id="users-content" role="tabpanel">
-                    <h6 class="text-white-50 small fw-bold text-uppercase mb-3">Управление доступом</h6>
-                    <div class="table-responsive" style="max-height: 50vh; overflow-y: auto;">
+                    <!-- Create User Form Card -->
+                    <h6 class="text-white-50 small fw-bold text-uppercase mb-2">Создать пользователя</h6>
+                    <form id="sidebarCreateUserForm" class="mb-4 p-3 rounded-4 border border-light-subtle" style="background: rgba(255,255,255,0.02);">
+                        <div class="mb-2">
+                            <label class="form-label small text-white-50 mb-1">Имя пользователя</label>
+                            <input type="text" id="createUserUsername" class="form-control form-control-sm" required autocomplete="off" />
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small text-white-50 mb-1">Пароль</label>
+                            <input type="password" id="createUserPassword" class="form-control form-control-sm" required autocomplete="off" />
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small text-white-50 mb-1">Роль</label>
+                            <select id="createUserRole" class="form-select form-select-sm">
+                                <option value="User">Пользователь</option>
+                                <option value="Admin">Администратор</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-sm rounded-pill w-100 fw-bold mt-2">Создать</button>
+                    </form>
+
+                    <!-- Users list heading -->
+                    <h6 class="text-white-50 small fw-bold text-uppercase mb-3">Список пользователей</h6>
+                    <div class="table-responsive" style="max-height: 40vh; overflow-y: auto;">
                         <table class="table table-dark table-hover align-middle border-0 text-white" id="sidebarUsersTable">
                             <thead>
                                 <tr class="text-white-50 small border-bottom border-light-subtle">
@@ -180,14 +211,45 @@
                 const tabButtons = document.querySelectorAll('#adminTabs button');
                 tabButtons.forEach(btn => {
                     btn.addEventListener('click', (e) => {
-                        tabButtons.forEach(b => {
-                            b.classList.remove('active', 'border-bottom', 'border-primary', 'border-2');
-                            b.classList.add('text-white-50');
-                        });
-                        btn.classList.add('active', 'border-bottom', 'border-primary', 'border-2');
-                        btn.classList.remove('text-white-50');
+                        tabButtons.forEach(b => b.classList.remove('active'));
+                        btn.classList.add('active');
                     });
                 });
+
+                // User Creation Form handler
+                const createUserForm = document.getElementById('sidebarCreateUserForm');
+                if (createUserForm) {
+                    createUserForm.addEventListener('submit', async (e) => {
+                        e.preventDefault();
+                        const username = document.getElementById('createUserUsername').value.trim();
+                        const password = document.getElementById('createUserPassword').value.trim();
+                        const role = document.getElementById('createUserRole').value;
+                        const antiafsToken = document.querySelector('input[name="__RequestVerificationToken"]').value;
+
+                        try {
+                            const response = await fetch('/Dashboard?handler=CreateUser', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'RequestVerificationToken': antiafsToken
+                                },
+                                body: JSON.stringify({ username, password, role })
+                            });
+
+                            if (response.ok) {
+                                alert('Пользователь успешно создан!');
+                                createUserForm.reset();
+                                await fetchAdminData();
+                            } else {
+                                const errMsg = await response.text();
+                                alert('Ошибка: ' + (errMsg || 'Не удалось создать пользователя.'));
+                            }
+                        } catch (err) {
+                            console.error(err);
+                            alert('Ошибка соединения с сервером.');
+                        }
+                    });
+                }
 
                 function updateNeonGraphs() {
                     const cpuText = document.getElementById('cpuLoadText');
@@ -281,7 +343,7 @@
                                 }
 
                                 return `
-                                    <div class="p-3 bg-light bg-opacity-5 rounded-4 border border-light-subtle d-flex align-items-center justify-content-between">
+                                    <div class="sidebar-task-card d-flex align-items-center justify-content-between mb-2">
                                         <div class="text-truncate me-2" style="max-width: 70%">
                                             <div class="small fw-bold text-white text-truncate" title="${t.originalFileName}">${t.originalFileName}</div>
                                             <div class="small ${statusClass}">${statusText}</div>
@@ -308,7 +370,7 @@
                                 <tr class="border-bottom border-light-subtle">
                                     <td class="border-0 bg-transparent fw-semibold text-white py-3">${u.username}</td>
                                     <td class="border-0 bg-transparent text-end py-3">
-                                        <span class="badge ${u.role === 1 ? 'bg-danger' : 'bg-secondary'} rounded-pill px-2.5 py-1 text-uppercase" style="font-size: 0.65rem">${u.role === 1 ? 'Admin' : 'User'}</span>
+                                        <span class="badge ${u.role === 1 ? 'badge-admin-glass' : 'badge-user-glass'} rounded-pill px-2.5 py-1 text-uppercase" style="font-size: 0.65rem">${u.role === 1 ? 'Admin' : 'User'}</span>
                                     </td>
                                 </tr>
                             `).join('');
@@ -318,6 +380,37 @@
             });
         </script>
     }
+
+    <!-- Universal Light/Dark Theme Switcher JS handler -->
+    <script>
+        (function() {
+            const savedTheme = localStorage.getItem('theme') || 'dark';
+            document.documentElement.setAttribute('data-theme', savedTheme);
+            updateThemeToggleUI(savedTheme);
+
+            const themeToggleBtn = document.getElementById('themeToggleBtn');
+            if (themeToggleBtn) {
+                themeToggleBtn.addEventListener('click', () => {
+                    const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+                    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+                    document.documentElement.setAttribute('data-theme', newTheme);
+                    localStorage.setItem('theme', newTheme);
+                    updateThemeToggleUI(newTheme);
+                });
+            }
+
+            function updateThemeToggleUI(theme) {
+                const icon = document.getElementById('themeToggleIcon');
+                if (icon) {
+                    if (theme === 'light') {
+                        icon.className = 'bi bi-moon-stars-fill';
+                    } else {
+                        icon.className = 'bi bi-sun-fill';
+                    }
+                }
+            }
+        })();
+    </script>
 
     @await RenderSectionAsync("Scripts", required: false)
 </body>
