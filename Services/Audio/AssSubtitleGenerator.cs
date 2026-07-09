@@ -21,19 +21,7 @@ public class AssSubtitleGenerator : ISubtitleGenerator
 
     private static readonly Regex PunctuationCleanRegex = new Regex(@"(^[\p{P}&&[^\-']]+)|([\p{P}&&[^\-']]+$)", RegexOptions.Compiled);
 
-    private static string MapFontName(string? uiFont) => uiFont switch
-    {
-        "Inter" => "Inter",
-        "Outfit" => "Outfit",
-        "Courier New" => "Courier New",
-        "Montserrat" => "Montserrat",
-        "Oswald" => "Oswald",
-        "Rubik" => "Rubik",
-        "Comfortaa" => "Comfortaa",
-        "Lobster" => "Lobster",
-        "Pacifico" => "Pacifico",
-        _ => "Outfit"
-    };
+    private static string MapFontName(string? uiFont) => "Arial";
 
     // Вспомогательный метод для перевода веб-цветов (#RRGGBB или названия) в формат ASS (AABBGGRR)
     private string ConvertToAssColor(string? uiColor, string defaultAssColor)
@@ -422,21 +410,14 @@ public class AssSubtitleGenerator : ISubtitleGenerator
 
         int len = wordText.Length;
         var charDurations = new int[len];
+        int baseDurationCs = totalWordCs / len;
+        int remainder = totalWordCs % len;
         int sumCs = 0;
 
         for (int i = 0; i < len; i++)
         {
-            double pStart = (double)i / len;
-            double pEnd = (double)(i + 1) / len;
-
-            double eStart = EaseInOutSine(pStart);
-            double eEnd = EaseInOutSine(pEnd);
-
-            double durationMs = (eEnd - eStart) * (totalWordCs * 10.0);
-            int durationCs = (int)Math.Round(durationMs / 10.0);
-
+            int durationCs = baseDurationCs + (i < remainder ? 1 : 0);
             if (durationCs <= 0) durationCs = 1;
-
             charDurations[i] = durationCs;
             sumCs += durationCs;
         }
@@ -444,17 +425,7 @@ public class AssSubtitleGenerator : ISubtitleGenerator
         int diff = totalWordCs - sumCs;
         if (diff != 0)
         {
-            int bestIdx = 0;
-            int maxVal = charDurations[0];
-            for (int i = 1; i < len; i++)
-            {
-                if (charDurations[i] > maxVal)
-                {
-                    maxVal = charDurations[i];
-                    bestIdx = i;
-                }
-            }
-            charDurations[bestIdx] = Math.Max(1, charDurations[bestIdx] + diff);
+            charDurations[0] = Math.Max(1, charDurations[0] + diff);
         }
 
         for (int i = 0; i < len; i++)

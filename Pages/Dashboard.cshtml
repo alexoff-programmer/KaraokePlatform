@@ -110,19 +110,7 @@
                                                     </select>
                                                 </div>
 
-                                                <div class="mb-3">
-                                                    <label class="form-label text-white-50 small">Шрифт караоке</label>
-                                                    <select asp-for="SubtitleFont" id="configFont" class="form-select">
-                                                        <option value="Inter">Inter (Строгий, кириллица)</option>
-                                                        <option value="Montserrat">Montserrat (Геометрический, кириллица)</option>
-                                                        <option value="Oswald">Oswald (Узкий / Жирный, кириллица)</option>
-                                                        <option value="Rubik">Rubik (Дружелюбный округлый, кириллица)</option>
-                                                        <option value="Comfortaa">Comfortaa (Стильный округлый, кириллица)</option>
-                                                        <option value="Lobster">Lobster (Винтажный курсив, кириллица)</option>
-                                                        <option value="Pacifico">Pacifico (Прикольный рукописный, кириллица)</option>
-                                                        <option value="Outfit">Outfit (Премиум, только латиница)</option>
-                                                    </select>
-                                                </div>
+
 
                                                 <div class="row g-3 mb-3">
                                                     <div class="col-6">
@@ -676,7 +664,7 @@
                                                                                                 }
 
                                                                                                 // Live visual subtitle settings updates
-                                                                                                const fontSelect = document.getElementById('configFont');
+                                                                                                const fontSelect = { value: 'Inter', addEventListener: () => {} };
                                                                                                 const priColorSelect = document.getElementById('configPrimaryColor');
                                                                                                 const secColorSelect = document.getElementById('configSecondaryColor');
                                                                                                 const formatSelect = document.getElementById('configVideoFormat');
