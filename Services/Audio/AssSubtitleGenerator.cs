@@ -211,6 +211,62 @@ public class AssSubtitleGenerator : ISubtitleGenerator
         }
     }
 
+    private double EaseInOutCubic(double x)
+    {
+        return x < 0.5 ? 4 * x * x * x : 1 - Math.Pow(-2 * x + 2, 3) / 2;
+    }
+
+    private void AppendCharacterLevelKaraoke(StringBuilder lineBuilder, string wordText, int totalWordCs)
+    {
+        if (string.IsNullOrEmpty(wordText)) return;
+
+        int len = wordText.Length;
+        var charDurations = new int[len];
+        int sumCs = 0;
+
+        for (int i = 0; i < len; i++)
+        {
+            double pStart = (double)i / len;
+            double pEnd = (double)(i + 1) / len;
+
+            double eStart = EaseInOutCubic(pStart);
+            double eEnd = EaseInOutCubic(pEnd);
+
+            double durationMs = (eEnd - eStart) * (totalWordCs * 10.0);
+            int durationCs = (int)Math.Round(durationMs / 10.0);
+
+            // Sanitization: minimum 1 centisecond per character
+            if (durationCs <= 0) durationCs = 1;
+
+            charDurations[i] = durationCs;
+            sumCs += durationCs;
+        }
+
+        // Checksum balancing: adjust longest duration character
+        int diff = totalWordCs - sumCs;
+        if (diff != 0)
+        {
+            int bestIdx = 0;
+            int maxVal = charDurations[0];
+            for (int i = 1; i < len; i++)
+            {
+                if (charDurations[i] > maxVal)
+                {
+                    maxVal = charDurations[i];
+                    bestIdx = i;
+                }
+            }
+
+            charDurations[bestIdx] = Math.Max(1, charDurations[bestIdx] + diff);
+        }
+
+        // Generate character-level tags
+        for (int i = 0; i < len; i++)
+        {
+            lineBuilder.Append($"{{\\kf{charDurations[i]}}}{wordText[i]}");
+        }
+    }
+
     private void ExtendPhraseEnds(List<List<WordTimeInfo>> phrases)
     {
         for (int i = 0; i < phrases.Count; i++)
@@ -314,7 +370,8 @@ public class AssSubtitleGenerator : ISubtitleGenerator
 
                 // В конце строки пробел не нужен, также как и перед переносом строки \N
                 string trailingSpace = (j != phrase.Count - 1 && j != splitIdx - 1) ? " " : "";
-                lineBuilder.Append($"{{\\kf{wordCs}}}{word.Text}{trailingSpace}");
+                AppendCharacterLevelKaraoke(lineBuilder, word.Text, wordCs);
+                lineBuilder.Append(trailingSpace);
 
                 currentTime = shiftedWordEnd;
             }
@@ -523,7 +580,8 @@ public class AssSubtitleGenerator : ISubtitleGenerator
                 if (wordCs <= 0) wordCs = 1;
 
                 string trailingSpace = (j != phrase.Count - 1) ? " " : "";
-                lineBuilder.Append($"{{\\kf{wordCs}}}{word.Text}{trailingSpace}");
+                AppendCharacterLevelKaraoke(lineBuilder, word.Text, wordCs);
+                lineBuilder.Append(trailingSpace);
 
                 currentTime = shiftedWordEnd;
             }
