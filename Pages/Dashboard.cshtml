@@ -6,341 +6,645 @@
     ViewData["Title"] = "Личный кабинет";
 }
 
-<style>
-    /* UI-фикс: меняем курсор на pointer для интерактивных элементов формы */
-    .form-check-switch-pointer .form-check-input,
-    .form-check-switch-pointer .form-check-label,
-    .form-select-pointer {
-        cursor: pointer !important;
-    }
-</style>
-
-<div class="container py-5">
-    <div class="row align-items-center justify-content-between mb-5 g-3">
-        <div class="col shadow-none">
-            <h1 class="h2 fw-bold text-dark mb-1">Добро пожаловать, @User.Identity?.Name</h1>
-            <p class="text-muted mb-0">Ваша личная студия обработки audio в караоке-видео.</p>
+<div class="container py-4">
+    <!-- Success/Error Alert Bar -->
+    @if (!string.IsNullOrEmpty(Model.SuccessMessage) || TempData["SuccessMessage"] != null)
+    {
+        <div class="alert alert-success border-0 shadow rounded-4 mb-4 bg-success bg-opacity-25 text-white" role="alert">
+            <i class="bi bi-check-circle-fill me-2 text-success"></i>
+            @(Model.SuccessMessage ?? TempData["SuccessMessage"])
         </div>
-        @* Кнопка отображается только если у пользователя есть роль Admin *@
-        @if (User.IsInRole("Admin"))
-        {
-            <div class="col-auto text-end">
-                <a asp-page="/Admin/ManageUsers" class="btn btn-outline-danger btn-lg fw-bold rounded-3 shadow-sm px-4">
-                    <i class="bi bi-shield-lock-fill me-2"></i>Панель администратора
-                </a>
-            </div>
-        }
-    </div>
+    }
+    @if (!string.IsNullOrEmpty(Model.ErrorMessage) || TempData["ErrorMessage"] != null)
+    {
+        <div class="alert alert-danger border-0 shadow rounded-4 mb-4 bg-danger bg-opacity-25 text-white" role="alert">
+            <i class="bi bi-exclamation-triangle-fill me-2 text-danger"></i>
+            @(Model.ErrorMessage ?? TempData["ErrorMessage"])
+        </div>
+    }
 
-    <div class="row g-4">
-        @* Форма загрузки *@
-        <div class="col-lg-4">
-            <div class="card border-0 shadow-sm p-4 rounded-4">
-                <h5 class="fw-bold mb-3">Загрузить трек</h5>
-                <form id="uploadForm" method="post" asp-page-handler="Upload" enctype="multipart/form-data">
-                    <input type="hidden" name="GeminiApiKey" id="dashboardGeminiApiKey" />
-                    <input type="hidden" name="AutoImproveEnabled" id="dashboardAutoImproveEnabled" />
-                    <div class="mb-3">
-                        <label class="form-label text-muted small">Файл MP3</label>
-                        <input asp-for="UploadedAudio" class="form-control form-control-lg" type="file" accept=".mp3"
-                               required />
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label text-muted small">Фоновое изображение (необязательно)</label>
-                        <input asp-for="UploadedBackground" class="form-control form-control-lg" type="file"
-                               accept=".jpg,.jpeg,.png" />
-                        <div class="form-text small text-muted">Если не выбрать, фон останется черным.</div>
-                    </div>
-                    <div class="mb-3">
-                        @* ИСПРАВЛЕНО: Добавлен вспомогательный класс form-check-switch-pointer *@
-                        <div
-                            class="form-check form-switch p-3 bg-light rounded-3 border border-light-subtle form-check-switch-pointer">
-                            <input asp-for="RemoveVocal" class="form-check-input ms-0 me-2" type="checkbox"
-                                   role="switch" id="removeVocalSwitch" checked>
-                            <label class="form-check-label fw-semibold text-dark" for="removeVocalSwitch">🤫 Удалить
-                                оригинальный вокал</label>
-                                <div class="form-text small text-muted ps-0 mt-1">Если включено, ИИ вырежет голос и создаст
-                                    чистую минусовку. Если выключено — голос останется.</div>
-                                </div>
-                            </div>
-                            <div class="mb-4">
-                                <label class="form-label text-muted small">Язык</label>
-                                @* ИСПРАВЛЕНО: Добавлен класс form-select-pointer *@
-                                <select asp-for="SelectedLanguage" class="form-select form-select-lg form-select-pointer">
-                                    <option value="auto">🌍 Автоматически</option>
-                                    <option value="ru">🇷🇺 Русский</option>
-                                    <option value="en">🇺🇸 Английский</option>
-                                </select>
-                            </div>
-                            <div class="mb-4">
-                                <label class="form-label text-muted small d-block">Качество разделения вокала</label>
-                                <div class="btn-group w-100" role="group" aria-label="Separation Quality">
-                                    <input type="radio" class="btn-check" name="SelectedQuality" id="qualityLow" value="low" autocomplete="off" />
-                                    <label class="btn btn-outline-primary py-2 fw-semibold" for="qualityLow">Низкое</label>
+    <!-- Outer Form wrapping both Configurator and Preview to ensure proper tag helper nesting -->
+    <form id="uploadForm" method="post" asp-page-handler="Upload" enctype="multipart/form-data">
+        @Html.AntiForgeryToken()
+        <input type="hidden" name="GeminiApiKey" id="dashboardGeminiApiKey" />
+        <input type="hidden" name="AutoImproveEnabled" id="dashboardAutoImproveEnabled" />
+        <input type="hidden" name="SelectedPresetBg" id="dashboardSelectedPresetBg" />
 
-                                    <input type="radio" class="btn-check" name="SelectedQuality" id="qualityMedium" value="medium" autocomplete="off" checked />
-                                    <label class="btn btn-outline-primary py-2 fw-semibold" for="qualityMedium">Среднее</label>
-
-                                    <input type="radio" class="btn-check" name="SelectedQuality" id="qualityHigh" value="high" autocomplete="off" />
-                                    <label class="btn btn-outline-primary py-2 fw-semibold" for="qualityHigh">Высокое</label>
-                                </div>
-                                <div class="form-text small text-muted mt-2">Качество напрямую влияет на скорость: Высокое использует тяжелый ИИ (BS-Roformer), Среднее и Низкое работают быстро на базе MDX-Net.</div>
-                            </div>
-                            <button type="submit" class="btn btn-primary btn-lg w-100 fw-bold">Начать обработку</button>
-                        </form>
-                    </div>
-                </div>
-
-                @* Таблица задач *@
-                <div class="col-lg-8">
-                    <div class="card shadow-sm border-0 rounded-4">
-                        <div class="card-body p-4">
-                            <h5 class="card-title mb-4 fw-bold">Мои генерации</h5>
-
-                            @if (!Model.UserTasks.Any())
-                            {
-                                <div class="text-center py-5 text-muted">
-                                    <i class="bi bi-music-note-beamed display-4 mb-3 d-block text-secondary opacity-50"></i>
-                                    <p class="mb-0">Вы еще не загрузили ни одного трека.</p>
-                                </div>
-                            }
-                            else
-                            {
-                                <div class="table-responsive">
-                                    <table class="table table-hover align-middle" style="table-layout: fixed; width: 100%;">
-                                        <thead class="table-light">
-                                            <tr>
-                                                <th style="width: 30%; font-size: 0.85rem;" class="text-secondary">Файл</th>
-                                                <th style="width: 20%; font-size: 0.85rem;" class="text-secondary">Дата</th>
-                                                <th style="width: 25%; font-size: 0.85rem;" class="text-secondary">Статус</th>
-                                                <th style="width: 25%; font-size: 0.85rem;" class="text-secondary text-end">
-                                                    Результат</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                @foreach (var task in Model.UserTasks)
-                                                {
-                                                    <tr id="task-@task.Id">
-                                                        <td class="fw-bold text-truncate" title="@task.OriginalFileName">
-                                                            @task.OriginalFileName
-                                                        </td>
-                                                        <td class="small text-muted">@task.CreatedAt.ToLocalTime().ToString("g")</td>
-                                                        <td class="task-status">
-                                                            @if (task.Status == KaraokeTaskStatus.InQueue)
-                                                            {
-                                                                <span class="text-secondary small"><i class="bi bi-hourglass-split me-1"></i>В
-                                                                    очереди</span>
-                                                                }
-                                                else if (task.Status == KaraokeTaskStatus.Processing)
-                                                                {
-                                                                    <div class="processing-container">
-                                                                        <div class="d-flex align-items-center text-warning small mb-1 text-nowrap">
-                                                                            <div class="spinner-border spinner-border-sm me-2 flex-shrink-0"
-                                                                                 role="status"></div>
-                                                                            <span class="processing-text">Обработка...</span>
-                                                                        </div>
-                                                                        <div class="progress" style="height: 4px; background-color: #f0f0f0;">
-                                                                            <div class="progress-bar progress-bar-striped progress-bar-animated bg-warning"
-                                                                                 role="progressbar" style="width: 10%"></div>
-                                                                        </div>
-                                                                    </div>
-                                                                }
-                                                                else if (task.Status == KaraokeTaskStatus.AwaitingReview)
-                                                                {
-                                                                    <span class="text-warning small text-nowrap"><i
-                                                                        class="bi bi-pencil-square me-1"></i>Ожидает проверки</span>
-                                                                    }
-                                                else if (task.Status == KaraokeTaskStatus.Completed)
-                                                                    {
-                                                                        <span class="text-success small"><i
-                                                                            class="bi bi-check-circle-fill me-1"></i>Готово</span>
-                                                                        }
-                                                else if (task.Status == KaraokeTaskStatus.Failed)
-                                                                        {
-                                                                            <span class="text-danger small"
-                                                                                  title="@(string.IsNullOrEmpty(task.ErrorMessage) ? "Ошибка обработки" : task.ErrorMessage)">
-                                                                                <i class="bi bi-exclamation-triangle-fill me-1"></i>Ошибка
-                                                                            </span>
-                                                                        }
-                                                                    </td>
-                                                                    <td class="task-action text-end">
-                                                                        <div class="d-flex justify-content-end align-items-center gap-2">
-                                                                            @if (task.Status == KaraokeTaskStatus.Completed &&
-                                                                    !string.IsNullOrEmpty(task.VideoFilePath))
-                                                                            {
-                                                                                var downloadName =
-                                                                    System.IO.Path.GetFileNameWithoutExtension(task.OriginalFileName) + ".mp4";
-
-                                                                                <a href="/@task.VideoFilePath"
-                                                                                   class="btn btn-sm btn-outline-success rounded-3 px-3"
-                                                                                   download="@downloadName">
-                                                                                    <i class="bi bi-download me-1"></i>MP4
-                                                                                </a>
-                                                                            }
-                                                                            else if (task.Status == KaraokeTaskStatus.AwaitingReview)
-                                                                            {
-                                                                                <a asp-page="/EditSubtitles" asp-route-taskId="@task.Id"
-                                                                                   class="btn btn-sm btn-warning text-dark fw-bold rounded-3 px-3">
-                                                                                    <i class="bi bi-keyboard me-1"></i>Текст
-                                                                                </a>
-                                                                            }
-                                                                            else if (task.Status == KaraokeTaskStatus.Processing)
-                                                                            {
-                                                                                <button class="btn btn-sm btn-light rounded-3 text-muted" disabled>
-                                                                                    <i class="bi bi-cpu"></i>
-                                                                                </button>
-                                                                            }
-                                                                            else
-                                                                            {
-                                                                                <button class="btn btn-sm btn-light rounded-3 text-muted" disabled>
-                                                                                    <i class="bi bi-dash-lg"></i>
-                                                                                </button>
-                                                                            }
-
-                                                                            <form method="post" asp-page-handler="Delete" asp-route-taskId="@task.Id"
-                                                                                  onsubmit="return confirm('Вы уверены, что хотите прервать обработку и безвозвратно удалить эту генерацию и все файлы?');"
-                                                                                  class="d-inline m-0">
-                                                                                <button type="submit" class="btn btn-sm btn-outline-danger rounded-3"
-                                                                                        title="Прервать и удалить">
-                                                                                    <i class="bi bi-trash"></i>
-                                                                                </button>
-                                                                            </form>
-                                                                        </div>
-                                                                    </td>
-                                                                </tr>
-                                                            }
-                                                        </tbody>
-                                                    </table>
-                                                </div>
-                                            }
+        <div class="row g-4 mb-5">
+            <!-- Left Panel: Configurator Accordion -->
+            <div class="col-lg-4">
+                <div class="card glass-panel p-4 h-100">
+                    <h5 class="fw-bold mb-3 text-white"><i class="bi bi-sliders me-2 text-primary"></i>Параметры генерации</h5>
+                    <div class="accordion accordion-flush" id="configuratorAccordion">
+                        <!-- Accordion 1: Source Files -->
+                        <div class="accordion-item bg-transparent">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseFiles" aria-expanded="true">
+                                    📁 Исходные файлы
+                                </button>
+                            </h2>
+                            <div id="collapseFiles" class="accordion-collapse collapse show" data-bs-parent="#configuratorAccordion">
+                                <div class="accordion-body pt-0 px-1">
+                                    <div class="mb-3">
+                                        <label class="form-label text-white-50 small">Аудиодорожка (MP3 / WAV)</label>
+                                        <div class="dropzone-container" id="audioDropzone">
+                                            <i class="bi bi-soundwave display-6 text-primary mb-2 d-block"></i>
+                                            <span class="small d-block text-white" id="audioFilenameText">Перетащите сюда mp3 или кликните</span>
+                                            <input asp-for="UploadedAudio" class="position-absolute top-0 start-0 opacity-0 w-100 h-100" style="cursor: pointer;" type="file" accept=".mp3" id="audioFileInput" required />
                                         </div>
+                                    </div>
+
+                                    <div class="mb-3">
+                                        <label class="form-label text-white-50 small">Фоновое изображение</label>
+                                        <div class="dropzone-container mb-2" id="bgDropzone">
+                                            <i class="bi bi-image display-6 text-info mb-2 d-block"></i>
+                                            <span class="small d-block text-white" id="bgFilenameText">Загрузить изображение или видео</span>
+                                            <input asp-for="UploadedBackground" class="position-absolute top-0 start-0 opacity-0 w-100 h-100" style="cursor: pointer;" type="file" accept=".jpg,.jpeg,.png" id="bgFileInput" />
+                                        </div>
+                                        <button type="button" class="btn btn-outline-light btn-sm rounded-pill w-100 border-opacity-25 mt-2" style="border: 1px solid rgba(255,255,255,0.15);" data-bs-toggle="modal" data-bs-target="#presetGalleryModal">
+                                            <i class="bi bi-images me-1"></i> Выбрать из галереи ИИ
+                                        </button>
                                     </div>
                                 </div>
                             </div>
                         </div>
 
-                        @section Scripts {
-                            <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
-                            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+                        <!-- Accordion 2: Generation Settings -->
+                        <div class="accordion-item bg-transparent">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseSettings" aria-expanded="false">
+                                    ⚙️ Настройки видео
+                                </button>
+                            </h2>
+                            <div id="collapseSettings" class="accordion-collapse collapse" data-bs-parent="#configuratorAccordion">
+                                <div class="accordion-body pt-0 px-1">
+                                    <div class="mb-3">
+                                        <label class="form-label text-white-50 small">Язык трека</label>
+                                        <select asp-for="SelectedLanguage" id="configLanguage" class="form-select">
+                                            <option value="auto">🌍 Автоматически</option>
+                                            <option value="ru">🇷🇺 Русский</option>
+                                            <option value="en">🇺🇸 Английский</option>
+                                        </select>
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label class="form-label text-white-50 small">Качество разделения вокала</label>
+                                        <select asp-for="SelectedQuality" id="configQuality" class="form-select">
+                                            <option value="low">Низкое (MDX-Net)</option>
+                                            <option value="medium">Среднее (MDX-Net)</option>
+                                            <option value="high">Высокое (BS-Roformer)</option>
+                                        </select>
+                                    </div>
 
-                            <script>
-                                const connection = new signalR.HubConnectionBuilder()
-                                    .withUrl("/notificationHub")
-                                    .withAutomaticReconnect()
-                                    .build();
+                                    <div class="mb-3">
+                                        <label class="form-label text-white-50 small">Шрифт караоке</label>
+                                        <select id="configFont" class="form-select">
+                                            <option value="Inter">Inter (Строгий)</option>
+                                            <option value="Outfit">Outfit (Премиум)</option>
+                                            <option value="Courier New">Neon Display (Моноширинный)</option>
+                                        </select>
+                                    </div>
 
-                                connection.on("UpdateTaskStatus", function (taskId, status, videoUrl) {
-                                    const row = document.getElementById("task-" + taskId);
-                                    if (!row) return;
+                                    <div class="mb-3">
+                                        <label class="form-label text-white-50 small">Анимация закрашивания</label>
+                                        <select id="configFillStyle" class="form-select">
+                                            <option value="gradient">Плавный градиент</option>
+                                            <option value="classic">Классическая заливка</option>
+                                        </select>
+                                    </div>
 
-                                    const statusCell = row.querySelector(".task-status");
-                                    const actionCell = row.querySelector(".task-action");
+                                    <div class="form-check form-switch py-2 mb-2">
+                                        <input asp-for="RemoveVocal" class="form-check-input" type="checkbox" role="switch" id="removeVocalSwitch" checked>
+                                        <label class="form-check-label text-white small" for="removeVocalSwitch">Удалить вокал ИИ</label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
 
-                                    if (status.startsWith("Processing")) {
-                                        let container = statusCell.querySelector(".processing-container");
+                        <!-- Accordion 3: Gemini config -->
+                        <div class="accordion-item bg-transparent">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseGemini" aria-expanded="false">
+                                    ✨ Настройки Gemini ИИ
+                                </button>
+                            </h2>
+                            <div id="collapseGemini" class="accordion-collapse collapse" data-bs-parent="#configuratorAccordion">
+                                <div class="accordion-body pt-0 px-1 text-center py-3">
+                                    <p class="small text-white-50 mb-3" id="geminiStatusLabel">Статус: Выключено (нет API ключа)</p>
+                                    <button type="button" class="btn btn-outline-primary btn-sm rounded-pill w-100" data-bs-toggle="modal" data-bs-target="#geminiConfigModal">
+                                        <i class="bi bi-gear-fill me-1"></i> Конфигурация Gemini
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
-                                        if (!container) {
-                                            statusCell.innerHTML = `
-                                                                                                                                                                    <div class="processing-container">
-                                                                                                                                                                    <div class="d-flex align-items-center text-warning small mb-1 text-nowrap">
-                                                                                                                                                                    <div class="spinner-border spinner-border-sm me-2 flex-shrink-0" role="status"></div>
-                                                                                                                                                                    <span class="processing-text">Обработка...</span>
-                                                                                                                                                                    </div>
-                                                                                                                                                                    <div class="progress" style="height: 4px; background-color: #f0f0f0;">
-                                                                                                                                                                    <div class="progress-bar progress-bar-striped progress-bar-animated bg-warning" role="progressbar" style="width: 10%"></div>
-                                                                                                                                                                    </div>
-                                                                                                                                                                    </div>`;
-                                            container = statusCell.querySelector(".processing-container");
+            <!-- Center Column: Interactive Preview -->
+            <div class="col-lg-8">
+                <div class="card glass-panel p-4 h-100 d-flex flex-column justify-content-between">
+                    <h5 class="fw-bold mb-3 text-white"><i class="bi bi-eye me-2 text-info"></i>Интерактивное превью караоке</h5>
+                    
+                    <div class="player-preview-container flex-grow-1 mb-4 d-flex align-items-center justify-content-center">
+                        <img src="/images/presets/preset_cyberpunk.png" id="playerBgImage" class="player-preview-bg preset-card-cyberpunk" />
+                        <div class="player-preview-overlay">
+                            <div class="preview-subtitle-line text-white" id="previewSubLine1">
+                                Я люблю этот <span style="color: #a855f7;">красивый</span> караоке плеер
+                            </div>
+                            <div class="preview-subtitle-line text-white-50" id="previewSubLine2" style="font-size: 1.4rem;">
+                                Текст переливается градиентом в реальном времени
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="submit" id="btnGenerateSubmit" class="btn btn-primary btn-lg btn-generate-glowing w-100 py-3 fw-bold rounded-pill text-uppercase">
+                        <i class="bi bi-play-circle-fill me-2"></i>Сгенерировать караоке видео
+                    </button>
+                </div>
+            </div>
+        </div>
+    </form>
+
+    <!-- Active Generations Card -->
+    <div class="card glass-panel p-4 rounded-4 mt-4">
+        <h5 class="fw-bold text-white mb-4"><i class="bi bi-grid-3x3-gap me-2 text-warning"></i>Мои генерации</h5>
+
+        @if (!Model.UserTasks.Any())
+        {
+            <div class="text-center py-5 text-muted">
+                <i class="bi bi-music-note-beamed display-4 mb-3 d-block text-secondary opacity-50"></i>
+                <p class="mb-0">Вы еще не загрузили ни одного трека.</p>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-dark table-hover align-middle border-0 text-white" style="table-layout: fixed; width: 100%;">
+                    <thead>
+                        <tr class="text-white-50 border-bottom border-light-subtle">
+                            <th style="width: 35%">Файл</th>
+                            <th style="width: 20%">Дата</th>
+                            <th style="width: 25%">Статус</th>
+                            <th style="width: 20%" class="text-end">Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var task in Model.UserTasks)
+                        {
+                            <tr id="task-@task.Id">
+                                <td class="fw-bold text-truncate" title="@task.OriginalFileName">
+                                    @task.OriginalFileName
+                                </td>
+                                <td class="small text-white-50">@task.CreatedAt.ToLocalTime().ToString("g")</td>
+                                <td class="task-status">
+                                    @if (task.Status == KaraokeTaskStatus.InQueue)
+                                    {
+                                        <span class="text-white-50 small"><i class="bi bi-hourglass-split me-1"></i>В очереди</span>
+                                    }
+                                    else if (task.Status == KaraokeTaskStatus.Processing)
+                                    {
+                                        <div class="processing-container">
+                                            <div class="d-flex align-items-center text-warning small mb-1 text-nowrap">
+                                                <div class="spinner-border spinner-border-sm me-2 flex-shrink-0" role="status"></div>
+                                                <span class="processing-text">Обработка...</span>
+                                            </div>
+                                            <div class="progress" style="height: 4px; background-color: rgba(255,255,255,0.08);">
+                                                <div class="progress-bar progress-bar-striped progress-bar-animated bg-warning" role="progressbar" style="width: 10%"></div>
+                                            </div>
+                                        </div>
+                                    }
+                                    else if (task.Status == KaraokeTaskStatus.AwaitingReview)
+                                    {
+                                        <span class="text-info small text-nowrap"><i class="bi bi-pencil-square me-1"></i>Ожидает проверки</span>
+                                    }
+                                    else if (task.Status == KaraokeTaskStatus.ReadyToRender)
+                                    {
+                                        <span class="text-primary small text-nowrap"><i class="bi bi-gear-wide-connected me-1 animate-spin"></i>Сборка видео...</span>
+                                    }
+                                    else if (task.Status == KaraokeTaskStatus.Completed)
+                                    {
+                                        <span class="text-success small"><i class="bi bi-check-circle-fill me-1"></i>Готово</span>
+                                    }
+                                    else if (task.Status == KaraokeTaskStatus.Failed)
+                                    {
+                                        <span class="text-danger small" title="@(string.IsNullOrEmpty(task.ErrorMessage) ? "Ошибка обработки" : task.ErrorMessage)">
+                                            <i class="bi bi-exclamation-triangle-fill me-1"></i>Ошибка
+                                        </span>
+                                    }
+                                </td>
+                                <td class="task-action text-end">
+                                    <div class="d-flex justify-content-end align-items-center gap-2">
+                                        @if (task.Status == KaraokeTaskStatus.Completed && !string.IsNullOrEmpty(task.VideoFilePath))
+                                        {
+                                            var downloadName = System.IO.Path.GetFileNameWithoutExtension(task.OriginalFileName) + ".mp4";
+                                            <a href="/@task.VideoFilePath" class="btn btn-sm btn-outline-success rounded-pill px-3" download="@downloadName">
+                                                <i class="bi bi-download me-1"></i>MP4
+                                            </a>
+                                        }
+                                        else if (task.Status == KaraokeTaskStatus.AwaitingReview)
+                                        {
+                                            <a href="/EditSubtitles?taskId=@task.Id" class="btn btn-sm btn-warning text-dark fw-bold rounded-pill px-3">
+                                                <i class="bi bi-keyboard me-1"></i>Текст
+                                            </a>
+                                        }
+                                        else if (task.Status == KaraokeTaskStatus.Processing)
+                                        {
+                                            <button class="btn btn-sm btn-outline-light rounded-pill border-opacity-25" disabled>
+                                                <i class="bi bi-cpu"></i>
+                                            </button>
+                                        }
+                                        else
+                                        {
+                                            <button class="btn btn-sm btn-outline-light rounded-pill border-opacity-25" disabled>
+                                                <i class="bi bi-dash-lg"></i>
+                                            </button>
                                         }
 
-                                        const textElement = container.querySelector(".processing-text");
-                                        const progressBar = container.querySelector(".progress-bar");
-
-                                        const match = status.match(/\d+/);
-                                        const percent = match ? match[0] : "10";
-
-                                        let textDescription = `Обработка: ${percent}%`;
-                                        if (status.includes("(")) {
-                                            const subPhase = status.substring(status.indexOf("(") + 1, status.indexOf(")"));
-                                            textDescription = `${subPhase} (${percent}%)`;
-                                        }
-
-                                        if (textElement) textElement.innerText = textDescription;
-                                        if (progressBar) progressBar.style.width = percent + "%";
-
-                                        actionCell.innerHTML = `
-                                                                                                                                                                <div class="d-flex justify-content-end align-items-center gap-2">
-                                                                                                                                                                    <form method="post" action="/Dashboard?handler=Delete&taskId=${taskId}" onsubmit="return confirm('Прервать обработку и безвозвратно удалить все файлы?');" class="d-inline m-0">
-                                                                                                                                                                        <button type="submit" class="btn btn-sm btn-outline-danger rounded-3"><i class="bi bi-trash"></i></button>
-                                                                                                                                                                    </form>
-                                                                                                                                                                </div>`;
-                                    }
-                                    else if (status === "AwaitingReview") {
-                                        statusCell.innerHTML = `<span class="text-warning small text-nowrap"><i class="bi bi-pencil-square me-1"></i>Ожидает проверки</span>`;
-                                        actionCell.innerHTML = `
-                                                                                                                                                                <div class="d-flex justify-content-end align-items-center gap-2">
-                                                                                                                                                                    <a href="/EditSubtitles?taskId=${taskId}" class="btn btn-sm btn-warning text-dark fw-bold rounded-3 px-3">
-                                                                                                                                                                        <i class="bi bi-keyboard me-1"></i>Текст
-                                                                                                                                                                    </a>
-                                                                                                                                                                    <form method="post" action="/Dashboard?handler=Delete&taskId=${taskId}" onsubmit="return confirm('Вы уверены, что хотите удалить эту генерацию?');" class="d-inline m-0">
-                                                                                                                                                                        <button type="submit" class="btn btn-sm btn-outline-danger rounded-3"><i class="bi bi-trash"></i></button>
-                                                                                                                                                                    </form>
-                                                                                                                                                                </div>`;
-                                    }
-                                    else if (status === "ReadyToRender") {
-                                        statusBadge.innerText = "В очереди на сборку видео...";
-                                        statusBadge.className = "badge bg-info text-dark animate-pulse";
-                                    }
-                                    else if (status === "Completed") {
-                                        statusCell.innerHTML = `<span class="text-success small"><i class="bi bi-check-circle-fill me-1"></i>Готово</span>`;
-
-                                        const fileNameCell = row.querySelector("td.text-truncate");
-                                        let downloadName = "video.mp4";
-                                        if (fileNameCell) {
-                                            const originalName = fileNameCell.innerText.trim();
-                                            downloadName = originalName.replace(/\.[^/.]+$/, "") + ".mp4";
-                                        }
-
-                                        actionCell.innerHTML = `
-                                                                                                                                                                <div class="d-flex justify-content-end align-items-center gap-2">
-                                                                                                                                                                    <a href="/${videoUrl}" class="btn btn-sm btn-outline-success rounded-3 px-3" download="${downloadName}">
-                                                                                                                                                                        <i class="bi bi-download me-1"></i>MP4
-                                                                                                                                                                    </a>
-                                                                                                                                                                    <form method="post" action="/Dashboard?handler=Delete&taskId=${taskId}" onsubmit="return confirm('Вы уверены, что хотите удалить эту генерацию?');" class="d-inline m-0">
-                                                                                                                                                                        <button type="submit" class="btn btn-sm btn-outline-danger rounded-3"><i class="bi bi-trash"></i></button>
-                                                                                                                                                                    </form>
-                                                                                                                                                                </div>`;
-
-                                        row.classList.add("table-success");
-                                        setTimeout(() => row.classList.remove("table-success"), 2500);
-                                    }
-                                    else if (status === "Failed") {
-                                        statusCell.innerHTML = `<span class="text-danger small"><i class="bi bi-exclamation-triangle-fill me-1"></i>Ошибка</span>`;
-
-                                        actionCell.innerHTML = `
-                                                                                                                                                                <div class="d-flex justify-content-end align-items-center gap-2">
-                                                                                                                                                                    <button class="btn btn-sm btn-light rounded-3 text-muted" disabled><i class="bi bi-dash-lg"></i></button>
-                                                                                                                                                                    <form method="post" action="/Dashboard?handler=Delete&taskId=${taskId}" onsubmit="return confirm('Вы уверены, что хотите удалить эту генерацию?');" class="d-inline m-0">
-                                                                                                                                                                        <button type="submit" class="btn btn-sm btn-outline-danger rounded-3"><i class="bi bi-trash"></i></button>
-                                                                                                                                                                    </form>
-                                                                                                                                                                </div>`;
-                                    }
-                                });
-
-                                connection.start().catch(function (err) {
-                                    return console.error(err.toString());
-                                });
-
-                                // Populate hidden Gemini settings from localStorage
-                                const uploadForm = document.getElementById('uploadForm');
-                                if (uploadForm) {
-                                    uploadForm.addEventListener('submit', function() {
-                                        const apiKey = localStorage.getItem('geminiApiKey') || '';
-                                        const autoEnabled = localStorage.getItem('geminiAutoImprove') === 'true' ? 'true' : 'false';
-                                        
-                                        document.getElementById('dashboardGeminiApiKey').value = apiKey;
-                                        document.getElementById('dashboardAutoImproveEnabled').value = autoEnabled;
-                                    });
-                                }
-                            </script>
+                                        <form method="post" action="/Dashboard?handler=Delete&taskId=@task.Id" onsubmit="return confirm('Вы уверены, что хотите прервать обработку и удалить файлы?');" class="d-inline m-0">
+                                            @Html.AntiForgeryToken()
+                                            <button type="submit" class="btn btn-sm btn-outline-danger rounded-pill"><i class="bi bi-trash"></i></button>
+                                        </form>
+                                    </div>
+                                </td>
+                            </tr>
                         }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+<!-- Modal 1: Neural Background presets Gallery -->
+<div class="modal fade" id="presetGalleryModal" tabindex="-1" aria-labelledby="galleryLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content border-0 shadow rounded-4 text-white bg-dark">
+            <div class="modal-header border-bottom-0 pb-0">
+                <h5 class="modal-title fw-bold" id="galleryLabel"><i class="bi bi-images text-info me-2"></i>Галерея абстрактных фонов ИИ</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body pb-4">
+                <p class="small text-white-50 mb-4">Выберите один из готовых художественных шаблонов для генерации видео.</p>
+                <div class="row row-cols-1 row-cols-md-3 g-3">
+                    <div class="col">
+                        <div class="card bg-transparent border-light border-opacity-10 rounded-4 overflow-hidden preset-choice-card cursor-pointer" onclick="selectPreset('preset_cyberpunk')">
+                            <img src="/images/presets/preset_cyberpunk.png" class="card-img-top preset-card-cyberpunk" style="height: 120px; object-fit: cover;" />
+                            <div class="card-body p-3">
+                                <h6 class="fw-bold text-white mb-1 small">Cyberpunk Neon</h6>
+                                <span class="text-white-50 small" style="font-size: 0.75rem;">Неоновые градиенты и свечения</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col">
+                        <div class="card bg-transparent border-light border-opacity-10 rounded-4 overflow-hidden preset-choice-card cursor-pointer" onclick="selectPreset('preset_aurora')">
+                            <img src="/images/presets/preset_aurora.png" class="card-img-top preset-card-aurora" style="height: 120px; object-fit: cover;" />
+                            <div class="card-body p-3">
+                                <h6 class="fw-bold text-white mb-1 small">Aurora Wave</h6>
+                                <span class="text-white-50 small" style="font-size: 0.75rem;">Зеленые и фиолетовые переливы</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col">
+                        <div class="card bg-transparent border-light border-opacity-10 rounded-4 overflow-hidden preset-choice-card cursor-pointer" onclick="selectPreset('preset_nebula')">
+                            <img src="/images/presets/preset_nebula.png" class="card-img-top preset-card-nebula" style="height: 120px; object-fit: cover;" />
+                            <div class="card-body p-3">
+                                <h6 class="fw-bold text-white mb-1 small">Cosmic Nebula</h6>
+                                <span class="text-white-50 small" style="font-size: 0.75rem;">Космическое пылевое облако</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col">
+                        <div class="card bg-transparent border-light border-opacity-10 rounded-4 overflow-hidden preset-choice-card cursor-pointer" onclick="selectPreset('preset_sunset')">
+                            <img src="/images/presets/preset_sunset.png" class="card-img-top preset-card-sunset" style="height: 120px; object-fit: cover;" />
+                            <div class="card-body p-3">
+                                <h6 class="fw-bold text-white mb-1 small">Sunset Aura</h6>
+                                <span class="text-white-50 small" style="font-size: 0.75rem;">Теплые тона заходящего солнца</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col">
+                        <div class="card bg-transparent border-light border-opacity-10 rounded-4 overflow-hidden preset-choice-card cursor-pointer" onclick="selectPreset('preset_oceanic')">
+                            <img src="/images/presets/preset_oceanic.png" class="card-img-top preset-card-oceanic" style="height: 120px; object-fit: cover;" />
+                            <div class="card-body p-3">
+                                <h6 class="fw-bold text-white mb-1 small">Oceanic Liquid</h6>
+                                <span class="text-white-50 small" style="font-size: 0.75rem;">Глубокие океанические волны</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col">
+                        <div class="card bg-transparent border-light border-opacity-10 rounded-4 overflow-hidden preset-choice-card cursor-pointer" onclick="selectPreset('preset_monochrome')">
+                            <img src="/images/presets/preset_monochrome.png" class="card-img-top preset-card-monochrome" style="height: 120px; object-fit: cover;" />
+                            <div class="card-body p-3">
+                                <h6 class="fw-bold text-white mb-1 small">Midnight Minimal</h6>
+                                <span class="text-white-50 small" style="font-size: 0.75rem;">Графитовый минимализм</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal 2: Gemini Config Modal -->
+<div class="modal fade" id="geminiConfigModal" tabindex="-1" aria-labelledby="geminiConfigModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow rounded-4 bg-dark text-white">
+            <div class="modal-header border-bottom-0 pb-0">
+                <h5 class="modal-title fw-bold" id="geminiConfigModalLabel"><i class="bi bi-magic me-2 text-primary"></i>Настройки Gemini ИИ</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body pb-4">
+                <div class="mb-3">
+                    <label for="geminiApiKeyModalInput" class="form-label small fw-bold text-white-50">Gemini API Key</label>
+                    <input type="password" id="geminiApiKeyModalInput" class="form-control form-control-lg rounded-3" placeholder="AIzaSy..." autocomplete="off" />
+                    <div class="form-text small text-white-50">Ключ сохраняется локально в вашем браузере.</div>
+                </div>
+                <div class="form-check form-switch mb-4">
+                    <input class="form-check-input" type="checkbox" id="geminiAutoImproveModalInput" />
+                    <label class="form-check-label small fw-bold text-white-50" for="geminiAutoImproveModalInput">Автоматическое улучшение субтитров при загрузке</label>
+                </div>
+                
+                <div class="vstack gap-2">
+                    <button type="button" id="btnSaveGeminiConfig" class="btn btn-primary btn-lg rounded-pill w-100 fw-bold">
+                        Сохранить настройки
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
+
+    <script>
+        const connection = new signalR.HubConnectionBuilder()
+            .withUrl("/notificationHub")
+            .withAutomaticReconnect()
+            .build();
+
+        connection.on("UpdateTaskStatus", function (taskId, status, videoUrl) {
+            const row = document.getElementById("task-" + taskId);
+            if (!row) return;
+
+            const statusCell = row.querySelector(".task-status");
+            const actionCell = row.querySelector(".task-action");
+
+            if (status.startsWith("Processing")) {
+                let container = statusCell.querySelector(".processing-container");
+                if (!container) {
+                    statusCell.innerHTML = `
+                        <div class="processing-container">
+                            <div class="d-flex align-items-center text-warning small mb-1 text-nowrap">
+                                <div class="spinner-border spinner-border-sm me-2 flex-shrink-0" role="status"></div>
+                                <span class="processing-text">Обработка...</span>
+                            </div>
+                            <div class="progress" style="height: 4px; background-color: rgba(255,255,255,0.08);">
+                                <div class="progress-bar progress-bar-striped progress-bar-animated bg-warning" role="progressbar" style="width: 10%"></div>
+                            </div>
+                        </div>`;
+                    container = statusCell.querySelector(".processing-container");
+                }
+
+                const textElement = container.querySelector(".processing-text");
+                const progressBar = container.querySelector(".progress-bar");
+
+                const match = status.match(/\d+/);
+                const percent = match ? match[0] : "10";
+
+                let textDescription = `Обработка: ${percent}%`;
+                if (status.includes("(")) {
+                    const subPhase = status.substring(status.indexOf("(") + 1, status.indexOf(")"));
+                    textDescription = `${subPhase} (${percent}%)`;
+                }
+
+                if (textElement) textElement.innerText = textDescription;
+                if (progressBar) progressBar.style.width = percent + "%";
+
+                actionCell.innerHTML = `
+                    <div class="d-flex justify-content-end align-items-center gap-2">
+                        <form method="post" action="/Dashboard?handler=Delete&taskId=${taskId}" onsubmit="return confirm('Прервать обработку и удалить файлы?');" class="d-inline m-0">
+                            <button type="submit" class="btn btn-sm btn-outline-danger rounded-pill"><i class="bi bi-trash"></i></button>
+                        </form>
+                    </div>`;
+            }
+            else if (status === "AwaitingReview") {
+                statusCell.innerHTML = `<span class="text-info small text-nowrap"><i class="bi bi-pencil-square me-1"></i>Ожидает проверки</span>`;
+                actionCell.innerHTML = `
+                    <div class="d-flex justify-content-end align-items-center gap-2">
+                        <a href="/EditSubtitles?taskId=${taskId}" class="btn btn-sm btn-warning text-dark fw-bold rounded-pill px-3">
+                            <i class="bi bi-keyboard me-1"></i>Текст
+                        </a>
+                        <form method="post" action="/Dashboard?handler=Delete&taskId=${taskId}" onsubmit="return confirm('Вы уверены, что хотите удалить эту генерацию?');" class="d-inline m-0">
+                            <button type="submit" class="btn btn-sm btn-outline-danger rounded-pill"><i class="bi bi-trash"></i></button>
+                        </form>
+                    </div>`;
+            }
+            else if (status === "ReadyToRender") {
+                statusCell.innerHTML = `<span class="text-primary small text-nowrap"><i class="bi bi-gear-wide-connected me-1 animate-spin"></i>Сборка видео...</span>`;
+            }
+            else if (status === "Completed") {
+                statusCell.innerHTML = `<span class="text-success small"><i class="bi bi-check-circle-fill me-1"></i>Готово</span>`;
+
+                const fileNameCell = row.querySelector("td.text-truncate");
+                let downloadName = "video.mp4";
+                if (fileNameCell) {
+                    const originalName = fileNameCell.innerText.trim();
+                    downloadName = originalName.replace(/\.[^/.]+$/, "") + ".mp4";
+                }
+
+                actionCell.innerHTML = `
+                    <div class="d-flex justify-content-end align-items-center gap-2">
+                        <a href="/${videoUrl}" class="btn btn-sm btn-outline-success rounded-pill px-3" download="${downloadName}">
+                            <i class="bi bi-download me-1"></i>MP4
+                        </a>
+                        <form method="post" action="/Dashboard?handler=Delete&taskId=${taskId}" onsubmit="return confirm('Вы уверены, что хотите удалить эту генерацию?');" class="d-inline m-0">
+                            <button type="submit" class="btn btn-sm btn-outline-danger rounded-pill"><i class="bi bi-trash"></i></button>
+                        </form>
+                    </div>`;
+
+                row.classList.add("table-success");
+                setTimeout(() => row.classList.remove("table-success"), 2500);
+            }
+            else if (status === "Failed") {
+                statusCell.innerHTML = `<span class="text-danger small"><i class="bi bi-exclamation-triangle-fill me-1"></i>Ошибка</span>`;
+
+                actionCell.innerHTML = `
+                    <div class="d-flex justify-content-end align-items-center gap-2">
+                        <button class="btn btn-sm btn-light rounded-pill text-muted border-opacity-25" disabled><i class="bi bi-dash-lg"></i></button>
+                        <form method="post" action="/Dashboard?handler=Delete&taskId=${taskId}" onsubmit="return confirm('Вы уверены, что хотите удалить эту генерацию?');" class="d-inline m-0">
+                            <button type="submit" class="btn btn-sm btn-outline-danger rounded-pill"><i class="bi bi-trash"></i></button>
+                        </form>
+                    </div>`;
+            }
+        });
+
+        connection.start().catch(function (err) {
+            return console.error(err.toString());
+        });
+
+        // Config Elements Drag and Drop & Change logic
+        const audioFileInput = document.getElementById('audioFileInput');
+        const audioFilenameText = document.getElementById('audioFilenameText');
+        audioFileInput.addEventListener('change', () => {
+            if (audioFileInput.files.length > 0) {
+                audioFilenameText.innerText = "🎵 " + audioFileInput.files[0].name;
+                audioFilenameText.classList.add('text-success');
+            }
+        });
+
+        const bgFileInput = document.getElementById('bgFileInput');
+        const bgFilenameText = document.getElementById('bgFilenameText');
+        bgFileInput.addEventListener('change', () => {
+            if (bgFileInput.files.length > 0) {
+                bgFilenameText.innerText = "🖼️ " + bgFileInput.files[0].name;
+                bgFilenameText.classList.add('text-info');
+                document.getElementById('dashboardSelectedPresetBg').value = '';
+                
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = document.getElementById('playerBgImage');
+                    img.src = e.target.result;
+                    img.className = 'player-preview-bg';
+                };
+                reader.readAsDataURL(bgFileInput.files[0]);
+            }
+        });
+
+        function selectPreset(presetName) {
+            applyBackgroundPreset(presetName);
+            const modalEl = document.getElementById('presetGalleryModal');
+            const modal = bootstrap.Modal.getInstance(modalEl);
+            if (modal) modal.hide();
+        }
+
+        function applyBackgroundPreset(presetName) {
+            const cleanName = presetName.replace('.png', '');
+            const img = document.getElementById('playerBgImage');
+            img.src = `/images/presets/${cleanName}.png`;
+            img.className = `player-preview-bg preset-card-${cleanName}`;
+            
+            document.getElementById('dashboardSelectedPresetBg').value = cleanName + '.png';
+            localStorage.setItem('SelectedPresetBg', cleanName + '.png');
+
+            bgFileInput.value = '';
+            bgFilenameText.innerText = "Загрузить изображение или видео";
+            bgFilenameText.classList.remove('text-info');
+        }
+
+        // Live visual subtitle settings updates
+        const fontSelect = document.getElementById('configFont');
+        const fillSelect = document.getElementById('configFillStyle');
+
+        function applyFontAndStylePreview(font, fill) {
+            const line1 = document.getElementById('previewSubLine1');
+            const line2 = document.getElementById('previewSubLine2');
+            
+            if (line1 && line2) {
+                line1.style.fontFamily = font;
+                line2.style.fontFamily = font;
+                
+                if (fill === 'gradient') {
+                    line1.style.textShadow = '0 2px 4px rgba(0,0,0,0.8), 0 0 20px rgba(168, 85, 247, 0.5)';
+                    line1.style.color = '#fff';
+                    line1.innerHTML = 'Я люблю этот <span style="background: linear-gradient(90deg, #a855f7, #6366f1); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 800;">красивый</span> караоке плеер';
+                } else {
+                    line1.style.textShadow = '0 2px 4px rgba(0,0,0,0.9)';
+                    line1.style.color = '#bc8bf8';
+                    line1.innerHTML = 'Я люблю этот красивый караоке плеер';
+                }
+            }
+        }
+
+        fontSelect.addEventListener('change', () => {
+            localStorage.setItem('SubtitleFont', fontSelect.value);
+            applyFontAndStylePreview(fontSelect.value, fillSelect.value);
+        });
+
+        fillSelect.addEventListener('change', () => {
+            localStorage.setItem('AnimationFillStyle', fillSelect.value);
+            applyFontAndStylePreview(fontSelect.value, fillSelect.value);
+        });
+
+        // Config persistence loaders
+        const langSelect = document.getElementById('configLanguage');
+        const qualSelect = document.getElementById('configQuality');
+        const vocalSwitch = document.getElementById('removeVocalSwitch');
+
+        langSelect.addEventListener('change', () => localStorage.setItem('SelectedLanguage', langSelect.value));
+        qualSelect.addEventListener('change', () => localStorage.setItem('SelectedQuality', qualSelect.value));
+        vocalSwitch.addEventListener('change', () => localStorage.setItem('RemoveVocal', vocalSwitch.checked));
+
+        function loadLocalConfig() {
+            const config = {
+                apiKey: localStorage.getItem('geminiApiKey') || '',
+                autoImprove: localStorage.getItem('geminiAutoImprove') === 'true',
+                lang: localStorage.getItem('SelectedLanguage') || 'auto',
+                quality: localStorage.getItem('SelectedQuality') || 'medium',
+                font: localStorage.getItem('SubtitleFont') || 'Outfit',
+                fill: localStorage.getItem('AnimationFillStyle') || 'gradient',
+                removeVocal: localStorage.getItem('RemoveVocal') !== 'false',
+                preset: localStorage.getItem('SelectedPresetBg') || 'preset_cyberpunk.png'
+            };
+
+            document.getElementById('dashboardGeminiApiKey').value = config.apiKey;
+            document.getElementById('dashboardAutoImproveEnabled').value = config.autoImprove;
+
+            const modalKey = document.getElementById('geminiApiKeyModalInput');
+            const modalSwitch = document.getElementById('geminiAutoImproveModalInput');
+            if (modalKey) modalKey.value = config.apiKey;
+            if (modalSwitch) modalSwitch.checked = config.autoImprove;
+
+            langSelect.value = config.lang;
+            qualSelect.value = config.quality;
+            fontSelect.value = config.font;
+            fillSelect.value = config.fill;
+            vocalSwitch.checked = config.removeVocal;
+
+            applyBackgroundPreset(config.preset);
+            updateGeminiStatusLabel(config.apiKey, config.autoImprove);
+            applyFontAndStylePreview(config.font, config.fill);
+        }
+
+        function updateGeminiStatusLabel(key, auto) {
+            const label = document.getElementById('geminiStatusLabel');
+            if (label) {
+                if (key) {
+                    label.innerText = `Статус: Включено${auto ? ' (Автоулучшение)' : ''}`;
+                    label.className = "small text-success fw-bold";
+                } else {
+                    label.innerText = "Статус: Выключено (нет API ключа)";
+                    label.className = "small text-white-50";
+                }
+            }
+        }
+
+        document.getElementById('btnSaveGeminiConfig').addEventListener('click', () => {
+            const key = document.getElementById('geminiApiKeyModalInput').value.trim();
+            const auto = document.getElementById('geminiAutoImproveModalInput').checked;
+            
+            localStorage.setItem('geminiApiKey', key);
+            localStorage.setItem('geminiAutoImprove', auto ? 'true' : 'false');
+
+            document.getElementById('dashboardGeminiApiKey').value = key;
+            document.getElementById('dashboardAutoImproveEnabled').value = auto ? 'true' : 'false';
+
+            updateGeminiStatusLabel(key, auto);
+
+            const modalEl = document.getElementById('geminiConfigModal');
+            const modalInstance = bootstrap.Modal.getInstance(modalEl);
+            if (modalInstance) modalInstance.hide();
+        });
+
+        // Intercept uploadForm to feed values
+        document.getElementById('uploadForm').addEventListener('submit', () => {
+            document.getElementById('dashboardGeminiApiKey').value = localStorage.getItem('geminiApiKey') || '';
+            document.getElementById('dashboardAutoImproveEnabled').value = localStorage.getItem('geminiAutoImprove') === 'true' ? 'true' : 'false';
+        });
+
+        // Initialize configuration on load
+        loadLocalConfig();
+    </script>
+}

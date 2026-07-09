@@ -174,6 +174,7 @@ public class EditSubtitlesModel : PageModel
 
     public class GeminiRequest
     {
+        public Guid TaskId { get; set; }
         public string GeminiApiKey { get; set; } = string.Empty;
     }
 
@@ -184,7 +185,7 @@ public class EditSubtitlesModel : PageModel
             return BadRequest("Необходим корректный Gemini API Key.");
         }
 
-        var task = await _context.KaraokeTasks.FirstOrDefaultAsync(t => t.Id == TaskId);
+        var task = await _context.KaraokeTasks.FirstOrDefaultAsync(t => t.Id == request.TaskId);
         if (task == null) return NotFound("Задача не найдена.");
 
         var originalPhrases = JsonSerializer.Deserialize<List<List<WordTimeInfo>>>(task.DetectedLinesJson ?? "[]") ?? new();

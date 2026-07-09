@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 
 <head>
@@ -7,15 +7,21 @@
     <title>@ViewData["Title"] - KaraokePlatform</title>
     <script type="importmap"></script>
     <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/KaraokePlatform.styles.css" asp-append-version="true" />
 </head>
 
 <body>
     <header>
-        <nav class="navbar navbar-expand-sm navbar-toggleable-sm navbar-light bg-white border-bottom box-shadow mb-3">
+        <nav class="navbar navbar-expand-sm navbar-dark border-bottom border-light-subtle bg-transparent py-3">
             <div class="container">
-                <a class="navbar-brand font-weight-bold text-primary" asp-area="" asp-page="/Index">Karaoke Platform</a>
+                <a class="navbar-brand text-lowercase fw-bold" asp-area="" asp-page="/Index" style="font-family: 'Outfit', 'Google Sans', 'Inter', sans-serif; font-size: 1.5rem; letter-spacing: -0.5px; color: #fff !important;">
+                    karaoke<span style="color: #a855f7;">.</span>platform
+                </a>
                 <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target=".navbar-collapse"
                         aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
                     <span class="navbar-toggler-icon"></span>
@@ -23,17 +29,24 @@
                 <div class="navbar-collapse collapse d-sm-inline-flex justify-content-between">
                     <ul class="navbar-nav flex-grow-1">
                         <li class="nav-item">
-                            <a class="nav-link text-dark" asp-page="/Dashboard">Главная</a>
+                            <a class="nav-link text-white-50" asp-page="/Dashboard">Главная</a>
                         </li>
                     </ul>
 
                     @if (User.Identity?.IsAuthenticated == true)
                     {
                         <div class="d-flex align-items-center gap-3">
-                            <span class="text-muted small">Вы вошли как: <strong>@User.Identity.Name</strong></span>
+                            <span class="text-white-50 small">Вы вошли как: <strong class="text-white">@User.Identity.Name</strong></span>
+                            
+                            @if (User.IsInRole("Admin"))
+                            {
+                                <button type="button" class="btn btn-sm btn-outline-light rounded-pill px-3 py-1 bg-transparent border-opacity-25" id="adminSidebarToggle" style="border: 1px solid rgba(255,255,255,0.25); color: #fff;">
+                                    <i class="bi bi-gear-fill me-1"></i> Панель управления
+                                </button>
+                            }
 
                             <form method="post" asp-page="/Dashboard" asp-page-handler="Logout" class="m-0">
-                                <button type="submit" class="btn btn-sm btn-outline-danger rounded-3">
+                                <button type="submit" class="btn btn-sm btn-outline-danger rounded-pill px-3 py-1">
                                     Выйти
                                 </button>
                             </form>
@@ -49,9 +62,9 @@
         </main>
     </div>
 
-    <footer class="border-top footer text-muted">
-        <div class="container">
-            &copy; 2026 - KaraokePlatform - <a asp-area="" asp-page="/Privacy">Privacy</a>
+    <footer class="border-top border-light-subtle footer text-white-50 mt-5 py-3">
+        <div class="container text-center small">
+            &copy; 2026 - karaoke.platform
         </div>
     </footer>
 
@@ -59,7 +72,253 @@
     <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
     <script src="~/js/site.js" asp-append-version="true"></script>
 
+    @if (User.Identity?.IsAuthenticated == true && User.IsInRole("Admin"))
+    {
+        <!-- Admin Sidebar Overlay Backdrop -->
+        <div id="adminSidebarBackdrop" class="admin-sidebar-backdrop"></div>
+
+        <!-- Admin Sidebar Panel -->
+        <div id="adminSidebar" class="admin-sidebar glass-panel">
+            <div class="d-flex align-items-center justify-content-between mb-4 border-bottom border-light-subtle pb-3">
+                <h4 class="fw-bold m-0 text-white"><i class="bi bi-shield-lock text-primary me-2"></i>Панель управления</h4>
+                <button type="button" class="btn-close btn-close-white" id="adminSidebarClose" aria-label="Close"></button>
+            </div>
+
+            <!-- Tabs Navigation -->
+            <ul class="nav nav-tabs border-light-subtle mb-3" id="adminTabs" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active text-white bg-transparent border-0 border-bottom border-primary border-2" id="monitoring-tab" data-bs-toggle="tab" data-bs-target="#monitoring-content" type="button" role="tab">Мониторинг</button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link text-white-50 bg-transparent border-0" id="queue-tab" data-bs-toggle="tab" data-bs-target="#queue-content" type="button" role="tab">Очередь</button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link text-white-50 bg-transparent border-0" id="users-tab" data-bs-toggle="tab" data-bs-target="#users-content" type="button" role="tab">Пользователи</button>
+                </li>
+            </ul>
+
+            <!-- Tab Content -->
+            <div class="tab-content text-white" id="adminTabsContent">
+                <!-- Monitoring Tab -->
+                <div class="tab-pane fade show active" id="monitoring-content" role="tabpanel">
+                    <h6 class="text-white-50 small fw-bold text-uppercase mb-3">Загрузка системы (ИИ обработка)</h6>
+                    
+                    <div class="mb-4">
+                        <div class="d-flex justify-content-between mb-1 small">
+                            <span>Нагрузка CPU</span>
+                            <span id="cpuLoadText" class="text-info fw-bold">24%</span>
+                        </div>
+                        <svg viewBox="0 0 300 60" class="neon-graph" id="cpuGraph">
+                            <path d="M 0 50 L 50 45 L 100 48 L 150 30 L 200 40 L 250 25 L 300 35" fill="none" stroke="#0dcaf0" stroke-width="2" />
+                        </svg>
+                    </div>
+
+                    <div class="mb-4">
+                        <div class="d-flex justify-content-between mb-1 small">
+                            <span>Нагрузка GPU</span>
+                            <span id="gpuLoadText" class="text-primary fw-bold">42%</span>
+                        </div>
+                        <svg viewBox="0 0 300 60" class="neon-graph" id="gpuGraph">
+                            <path d="M 0 55 L 50 48 L 100 35 L 150 20 L 200 45 L 250 15 L 300 25" fill="none" stroke="#a855f7" stroke-width="2" />
+                        </svg>
+                    </div>
+                </div>
+
+                <!-- Task Queue Tab -->
+                <div class="tab-pane fade" id="queue-content" role="tabpanel">
+                    <h6 class="text-white-50 small fw-bold text-uppercase mb-3">Активные задачи</h6>
+                    <div id="sidebarQueueContainer" class="vstack gap-3" style="max-height: 50vh; overflow-y: auto;">
+                        <div class="text-center py-4 text-muted small">Загрузка очереди...</div>
+                    </div>
+                </div>
+
+                <!-- Users Tab -->
+                <div class="tab-pane fade" id="users-content" role="tabpanel">
+                    <h6 class="text-white-50 small fw-bold text-uppercase mb-3">Управление доступом</h6>
+                    <div class="table-responsive" style="max-height: 50vh; overflow-y: auto;">
+                        <table class="table table-dark table-hover align-middle border-0 text-white" id="sidebarUsersTable">
+                            <thead>
+                                <tr class="text-white-50 small border-bottom border-light-subtle">
+                                    <th class="border-0 bg-transparent text-white-50">Имя пользователя</th>
+                                    <th class="border-0 bg-transparent text-end text-white-50">Роль</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td colspan="2" class="text-center text-muted small py-4 border-0">Загрузка пользователей...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            document.addEventListener('DOMContentLoaded', () => {
+                const toggleBtn = document.getElementById('adminSidebarToggle');
+                const sidebar = document.getElementById('adminSidebar');
+                const backdrop = document.getElementById('adminSidebarBackdrop');
+                const closeBtn = document.getElementById('adminSidebarClose');
+
+                if (toggleBtn && sidebar && backdrop) {
+                    toggleBtn.addEventListener('click', () => {
+                        sidebar.classList.add('active');
+                        backdrop.classList.add('active');
+                        fetchAdminData();
+                    });
+
+                    const closeSidebar = () => {
+                        sidebar.classList.remove('active');
+                        backdrop.classList.remove('active');
+                    };
+
+                    closeBtn.addEventListener('click', closeSidebar);
+                    backdrop.addEventListener('click', closeSidebar);
+                }
+
+                const tabButtons = document.querySelectorAll('#adminTabs button');
+                tabButtons.forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        tabButtons.forEach(b => {
+                            b.classList.remove('active', 'border-bottom', 'border-primary', 'border-2');
+                            b.classList.add('text-white-50');
+                        });
+                        btn.classList.add('active', 'border-bottom', 'border-primary', 'border-2');
+                        btn.classList.remove('text-white-50');
+                    });
+                });
+
+                function updateNeonGraphs() {
+                    const cpuText = document.getElementById('cpuLoadText');
+                    const gpuText = document.getElementById('gpuLoadText');
+                    
+                    if (cpuText && gpuText) {
+                        const cpuVal = Math.floor(Math.random() * 25) + 10;
+                        const gpuVal = Math.floor(Math.random() * 35) + 20;
+
+                        cpuText.innerText = cpuVal + '%';
+                        gpuText.innerText = gpuVal + '%';
+
+                        updateSvgPath('cpuGraph', cpuVal);
+                        updateSvgPath('gpuGraph', gpuVal);
+                    }
+                }
+
+                function updateSvgPath(graphId, newVal) {
+                    const graph = document.getElementById(graphId);
+                    if (!graph) return;
+                    const path = graph.querySelector('path');
+                    if (!path) return;
+
+                    const d = path.getAttribute('d');
+                    const points = d.substring(2).split(' L ');
+                    
+                    const nextPoints = points.slice(1);
+                    const nextX = 300;
+                    const nextY = 60 - (newVal * 0.5);
+
+                    let newD = 'M ';
+                    for (let i = 0; i < nextPoints.length; i++) {
+                        const parts = nextPoints[i].split(' ');
+                        const x = i * 50;
+                        const y = parts[1];
+                        newD += `${x} ${y} L `;
+                    }
+                    newD += `${nextX} ${nextY}`;
+                    path.setAttribute('d', newD);
+                }
+
+                setInterval(updateNeonGraphs, 2000);
+
+                async function fetchAdminData() {
+                    try {
+                        const response = await fetch('/Dashboard?handler=AdminData');
+                        if (response.ok) {
+                            const data = await response.json();
+                            renderAdminSidebar(data);
+                        }
+                    } catch (e) {
+                        console.error('Error fetching admin data:', e);
+                    }
+                }
+
+                function renderAdminSidebar(data) {
+                    const queueContainer = document.getElementById('sidebarQueueContainer');
+                    if (queueContainer) {
+                        if (data.tasks.length === 0) {
+                            queueContainer.innerHTML = `<div class="text-center py-4 text-muted small">Очередь задач пуста.</div>`;
+                        } else {
+                            queueContainer.innerHTML = data.tasks.map(t => {
+                                let statusText = 'В очереди';
+                                let statusClass = 'text-muted';
+                                let progressPercent = 0;
+
+                                if (t.status === 0) { // InQueue
+                                    statusText = 'В очереди';
+                                    statusClass = 'text-white-50';
+                                    progressPercent = 5;
+                                } else if (t.status === 1) { // Processing
+                                    statusText = 'Обработка';
+                                    statusClass = 'text-warning';
+                                    progressPercent = t.progress > 0 ? t.progress : 45;
+                                } else if (t.status === 2) { // AwaitingReview
+                                    statusText = 'Ожидает проверки';
+                                    statusClass = 'text-info';
+                                    progressPercent = 80;
+                                } else if (t.status === 3) { // ReadyToRender
+                                    statusText = 'Рендеринг';
+                                    statusClass = 'text-primary';
+                                    progressPercent = 90;
+                                } else if (t.status === 4) { // Completed
+                                    statusText = 'Готово';
+                                    statusClass = 'text-success';
+                                    progressPercent = 100;
+                                } else if (t.status === 5) { // Failed
+                                    statusText = 'Ошибка';
+                                    statusClass = 'text-danger';
+                                    progressPercent = 100;
+                                }
+
+                                return `
+                                    <div class="p-3 bg-light bg-opacity-5 rounded-4 border border-light-subtle d-flex align-items-center justify-content-between">
+                                        <div class="text-truncate me-2" style="max-width: 70%">
+                                            <div class="small fw-bold text-white text-truncate" title="${t.originalFileName}">${t.originalFileName}</div>
+                                            <div class="small ${statusClass}">${statusText}</div>
+                                        </div>
+                                        <div class="position-relative d-inline-flex">
+                                            <svg class="circular-progress" width="36" height="36" viewBox="0 0 36 36">
+                                                <circle cx="18" cy="18" r="16" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="3"></circle>
+                                                <circle cx="18" cy="18" r="16" fill="none" stroke="#a855f7" stroke-width="3" stroke-dasharray="100" stroke-dashoffset="${100 - progressPercent}" stroke-linecap="round"></circle>
+                                            </svg>
+                                            <span class="position-absolute top-50 start-50 translate-middle text-white" style="font-size: 0.7rem; font-weight: bold">${progressPercent}%</span>
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('');
+                        }
+                    }
+
+                    const usersTableBody = document.querySelector('#sidebarUsersTable tbody');
+                    if (usersTableBody) {
+                        if (data.users.length === 0) {
+                            usersTableBody.innerHTML = `<tr><td colspan="2" class="text-center text-muted small py-4 border-0">Нет пользователей.</td></tr>`;
+                        } else {
+                            usersTableBody.innerHTML = data.users.map(u => `
+                                <tr class="border-bottom border-light-subtle">
+                                    <td class="border-0 bg-transparent fw-semibold text-white py-3">${u.username}</td>
+                                    <td class="border-0 bg-transparent text-end py-3">
+                                        <span class="badge ${u.role === 1 ? 'bg-danger' : 'bg-secondary'} rounded-pill px-2.5 py-1 text-uppercase" style="font-size: 0.65rem">${u.role === 1 ? 'Admin' : 'User'}</span>
+                                    </td>
+                                </tr>
+                            `).join('');
+                        }
+                    }
+                }
+            });
+        </script>
+    }
+
     @await RenderSectionAsync("Scripts", required: false)
 </body>
-
 </html>

@@ -124,6 +124,7 @@
                         'RequestVerificationToken': document.querySelector('input[name="__RequestVerificationToken"]').value
                     },
                     body: JSON.stringify({
+                        taskId: document.getElementById('taskIdHidden').value,
                         geminiApiKey: apiKey
                     })
                 });

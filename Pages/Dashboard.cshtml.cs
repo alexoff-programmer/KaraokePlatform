@@ -63,6 +63,9 @@ public class DashboardModel : PageModel
     [BindProperty]
     public bool AutoImproveEnabled { get; set; }
 
+    [BindProperty]
+    public string? SelectedPresetBg { get; set; }
+
     public List<KaraokeTask> UserTasks { get; set; } = new();
 
     public string ErrorMessage { get; set; } = string.Empty;
@@ -126,6 +129,25 @@ public class DashboardModel : PageModel
             }
 
             dbBackgroundPath = Path.Combine("uploads", "backgrounds", uniqueBgName);
+        }
+        else if (!string.IsNullOrEmpty(SelectedPresetBg))
+        {
+            var bgFolder = Path.Combine(_environment.WebRootPath, "uploads", "backgrounds");
+            if (!Directory.Exists(bgFolder))
+            {
+                Directory.CreateDirectory(bgFolder);
+            }
+
+            var presetFileName = SelectedPresetBg.EndsWith(".png") ? SelectedPresetBg : $"{SelectedPresetBg}.png";
+            var presetSourcePath = Path.Combine(_environment.WebRootPath, "images", "presets", presetFileName);
+
+            if (System.IO.File.Exists(presetSourcePath))
+            {
+                var uniqueBgName = $"{Guid.NewGuid()}.png";
+                var bgFilePath = Path.Combine(bgFolder, uniqueBgName);
+                System.IO.File.Copy(presetSourcePath, bgFilePath, true);
+                dbBackgroundPath = Path.Combine("uploads", "backgrounds", uniqueBgName);
+            }
         }
 
         var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
@@ -330,5 +352,22 @@ public class DashboardModel : PageModel
                 break;
             }
         }
+    }
+
+    public async Task<IActionResult> OnGetAdminDataAsync()
+    {
+        if (!User.IsInRole("Admin")) return Forbid();
+
+        var users = await _context.Users
+            .Select(u => new { u.Id, u.Username, u.Role })
+            .ToListAsync();
+
+        var tasks = await _context.KaraokeTasks
+            .OrderByDescending(t => t.CreatedAt)
+            .Take(10)
+            .Select(t => new { t.Id, t.OriginalFileName, t.Status })
+            .ToListAsync();
+
+        return new JsonResult(new { users, tasks });
     }
 }
