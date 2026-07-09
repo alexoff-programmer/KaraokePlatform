@@ -175,4 +175,74 @@ public class AudioProcessor : IAudioProcessor
             );
         }
     }
+
+    public float[] SliceSamples(float[] samples, ref TimeSpan start, TimeSpan end)
+    {
+        int startIndex = (int)(start.TotalSeconds * 16000);
+        int endIndex = (int)(end.TotalSeconds * 16000);
+
+        if (startIndex < 0) startIndex = 0;
+        if (endIndex > samples.Length) endIndex = samples.Length;
+        if (startIndex >= endIndex) return Array.Empty<float>();
+
+        int segmentLength = endIndex - startIndex;
+        var segmentSamples = new float[segmentLength];
+        Array.Copy(samples, startIndex, segmentSamples, 0, segmentLength);
+
+        // Find silent start duration using 20ms frames and noise-gating
+        int frameSize = 320;
+        int numFrames = segmentLength / frameSize;
+        int firstSpeechFrame = numFrames;
+
+        double[] frameRmsDb = new double[numFrames];
+        for (int f = 0; f < numFrames; f++)
+        {
+            double sumSq = 0;
+            for (int i = 0; i < frameSize; i++)
+            {
+                float s = segmentSamples[f * frameSize + i];
+                sumSq += s * s;
+            }
+            double rms = Math.Sqrt(sumSq / frameSize);
+            frameRmsDb[f] = 20 * Math.Log10(rms + 1e-10);
+        }
+
+        // Noise gate: find first frame where energy exceeds -38dB and is sustained
+        for (int f = 0; f < numFrames; f++)
+        {
+            if (frameRmsDb[f] >= -38.0)
+            {
+                int activeCount = 0;
+                int checkLimit = Math.Min(10, numFrames - f);
+                for (int offset = 0; offset < checkLimit; offset++)
+                {
+                    if (frameRmsDb[f + offset] >= -38.0)
+                    {
+                        activeCount++;
+                    }
+                }
+
+                if (activeCount >= 5)
+                {
+                    firstSpeechFrame = f;
+                    break;
+                }
+            }
+        }
+
+        double silentStartSec = firstSpeechFrame * 0.02;
+        double trimSec = Math.Min(silentStartSec, 0.700);
+
+        start = start.Add(TimeSpan.FromSeconds(trimSec));
+
+        int trimSamples = (int)(trimSec * 16000);
+        if (trimSamples > 0 && trimSamples < segmentSamples.Length)
+        {
+            var trimmedSamples = new float[segmentSamples.Length - trimSamples];
+            Array.Copy(segmentSamples, trimSamples, trimmedSamples, 0, trimmedSamples.Length);
+            return trimmedSamples;
+        }
+
+        return segmentSamples;
+    }
 }

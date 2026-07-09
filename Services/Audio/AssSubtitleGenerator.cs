@@ -18,8 +18,8 @@ public class AssSubtitleGenerator : ISubtitleGenerator
     private int FadeBufferMs = 50; // Небольшой зазор между физическим исчезновением одной строки и появлением другой
     private int MaxHoldAfterSpeechMs = 500;
 
-    // На сколько секунд раньше строка должна появиться на экране для подготовки
-    private static readonly TimeSpan PreRollTime = TimeSpan.FromSeconds(2.0);
+    // На сколько секунд раньше строка должна появиться на экране для подготовки (Lead-In Time)
+    private static readonly TimeSpan LeadInTime = TimeSpan.FromSeconds(1.5);
 
     // Регулярное выражение находит любые знаки препинания в начале или конце строки, ИГНОРИРУЯ дефисы и апострофы внутри слова
     private static readonly Regex PunctuationCleanRegex = new Regex(@"(^[\p{P}&&[^\-']]+)|([\p{P}&&[^\-']]+$)", RegexOptions.Compiled);
@@ -208,40 +208,25 @@ public class AssSubtitleGenerator : ISubtitleGenerator
         {
             var phrase = phrases[i];
 
-            // 1. Вычисляем фактический конец строки
-            TimeSpan lineEnd;
-            if (i < phrases.Count - 1)
-            {
-                var nextPhraseStart = phrases[i + 1].First().Start - TimeShift;
-                var phraseActualEnd = phrase.Last().End - TimeShift;
-                double cleanGap = (nextPhraseStart - phraseActualEnd).TotalMilliseconds;
+            // 1. Вычисляем фактический конец строки (Event.End = Phrase.End)
+            var phraseStart = phrase.First().Start - TimeShift;
+            var phraseEnd = phrase.Last().End - TimeShift;
 
-                if (cleanGap > InstrumentSilenceThresholdMs)
-                {
-                    lineEnd = phraseActualEnd + TimeSpan.FromMilliseconds(MaxHoldAfterSpeechMs);
-                }
-                else
-                {
-                    lineEnd = nextPhraseStart - TimeSpan.FromMilliseconds(FadeBufferMs);
-                }
-            }
-            else
-            {
-                lineEnd = phrase.Last().End - TimeShift + TimeSpan.FromMilliseconds(600);
-            }
+            if (phraseStart < TimeSpan.Zero) phraseStart = TimeSpan.Zero;
+            if (phraseEnd < phraseStart) phraseEnd = phraseStart;
 
-            // 2. Появление заранее (PreRoll)
-            var singingStart = phrase.First().Start - TimeShift;
-            if (singingStart < TimeSpan.Zero) singingStart = TimeSpan.Zero;
+            // Event.Start = Phrase.Start - LeadInTime
+            var lineStart = phraseStart - LeadInTime;
+            if (lineStart < TimeSpan.Zero) lineStart = TimeSpan.Zero;
 
-            var lineStart = singingStart - PreRollTime;
-
+            // Гарантируем монотонность
             if (lineStart < absoluteMinStart)
             {
                 lineStart = absoluteMinStart;
             }
+            if (lineStart > phraseStart) lineStart = phraseStart;
 
-            if (lineStart > singingStart) lineStart = singingStart;
+            var lineEnd = phraseEnd;
             if (lineEnd < lineStart) lineEnd = lineStart + TimeSpan.FromMilliseconds(500);
 
             absoluteMinStart = lineEnd + TimeSpan.FromMilliseconds(FadeBufferMs);
@@ -250,7 +235,15 @@ public class AssSubtitleGenerator : ISubtitleGenerator
             string assEnd = FormatTimeSpanForAss(lineEnd);
 
             var lineBuilder = new StringBuilder($"{{\\fad({FadeTimeMs}, {FadeTimeMs})}}");
-            TimeSpan currentTime = lineStart;
+
+            // Стартовый тег ожидания {\k<сантисекунды>}
+            int delayCs = (int)Math.Round((phraseStart - lineStart).TotalMilliseconds / 10.0);
+            if (delayCs > 0)
+            {
+                lineBuilder.Append($"{{\\k{delayCs}}}");
+            }
+
+            TimeSpan currentTime = phraseStart;
 
             // Находим точку сплита на две строки
             int splitIdx = GetBestSplitIndex(phrase, 40);

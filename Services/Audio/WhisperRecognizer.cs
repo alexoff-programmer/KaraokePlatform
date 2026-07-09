@@ -16,17 +16,20 @@ public class WhisperRecognizer : ISpeechRecognizer
 {
     private readonly string _modelPath;
     private readonly MmsForceAligner _forceAligner;
+    private readonly IAudioProcessor _audioProcessor;
     private WhisperFactory? _factory;
     private readonly object _lock = new object();
 
     public WhisperRecognizer(
         IOptions<WhisperSettings> settings, 
         IWebHostEnvironment environment,
-        MmsForceAligner forceAligner)
+        MmsForceAligner forceAligner,
+        IAudioProcessor audioProcessor)
     {
         var path = settings.Value.ModelPath;
         _modelPath = Path.IsPathRooted(path) ? path : Path.Combine(environment.ContentRootPath, path);
         _forceAligner = forceAligner;
+        _audioProcessor = audioProcessor;
     }
 
     private WhisperFactory GetFactory()
@@ -101,20 +104,14 @@ public class WhisperRecognizer : ISpeechRecognizer
         {
             var segment = segments[i];
 
-            // Нарезаем сэмплы вокала для данного сегмента
-            int startSample = (int)(segment.Start.TotalSeconds * 16000);
-            int endSample = (int)(segment.End.TotalSeconds * 16000);
+            var segmentStart = segment.Start;
+            var segmentEnd = segment.End;
+            var segmentSamples = _audioProcessor.SliceSamples(allSamples, ref segmentStart, segmentEnd);
 
-            if (startSample < 0) startSample = 0;
-            if (endSample > allSamples.Length) endSample = allSamples.Length;
-            if (startSample >= endSample) continue;
+            if (segmentSamples.Length == 0) continue;
 
-            int sampleCount = endSample - startSample;
-            var segmentSamples = new float[sampleCount];
-            Array.Copy(allSamples, startSample, segmentSamples, 0, sampleCount);
-
-            // Выравниваем слова внутри сегмента
-            var segmentWords = await _forceAligner.AlignAudioAsync(segmentSamples, segment.Text, language);
+            // Выравниваем слова внутри сегмента с runwayFrames = 5
+            var segmentWords = await _forceAligner.AlignAudioAsync(segmentSamples, segment.Text, language, 5);
 
             // Корректируем смещение времени относительно начала песни
             foreach (var w in segmentWords)
@@ -128,8 +125,8 @@ public class WhisperRecognizer : ISpeechRecognizer
                 alignedWords.Add(new WordTimeInfo
                 {
                     Text = cleanWordText,
-                    Start = segment.Start.Add(w.Start),
-                    End = segment.Start.Add(w.End)
+                    Start = segmentStart.Add(w.Start),
+                    End = segmentStart.Add(w.End)
                 });
             }
 

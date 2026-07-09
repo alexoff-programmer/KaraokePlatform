@@ -25,14 +25,15 @@ public class MmsForceAligner
     //  BEAM SEARCH ПАРАМЕТРЫ
     // ──────────────────────────────────────────────────────────────────
     private const int BeamWidth = 8;                  // Лучших путей одновременно
-    private const float BoostAlpha = 2.5f;            // Усиление вероятности целевого символа
+    private const float BoostAlpha = 3.0f;            // Усиление вероятности целевого символа
     private const float BlankPenalty = 0.6f;          // Штраф за ПРОПУСК blank-токена между словами
+    private const float TransitionPenalty = 0.8f;     // Штраф за переход к следующему символу
 
     // ──────────────────────────────────────────────────────────────────
     //  АУДИО-ПРЕДОБРАБОТКА
     // ──────────────────────────────────────────────────────────────────
     private const float PreEmphasisAlpha = 0.97f;     // Коэффициент формантного фильтра
-    private const int RmsWindowSamples = 32000;       // ~2 сек окно для RMS-нормализации при 16кГц
+    private const int RmsWindowSamples = 3200;        // 200ms микро-окно для RMS-нормализации при 16кГц
     private const float TargetRmsDb = -18.0f;         // Целевой уровень RMS в dBFS
 
     public MmsForceAligner(IWebHostEnvironment environment, ILogger<MmsForceAligner> logger)
@@ -69,7 +70,7 @@ public class MmsForceAligner
         {
             if (_session == null)
             {
-                var options = new SessionOptions();
+                var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
                 options.AppendExecutionProvider_CPU();
                 _session = new InferenceSession(_modelPath, options);
                 _logger.LogInformation("Сессия ONNX Runtime для Force Aligner инициализирована.");
@@ -77,7 +78,7 @@ public class MmsForceAligner
         }
     }
 
-    public async Task<List<WordTimeInfo>> AlignAudioAsync(float[] samples, string text, string language)
+    public async Task<List<WordTimeInfo>> AlignAudioAsync(float[] samples, string text, string language, int runwayFrames = 0)
     {
         await EnsureModelLoadedAsync();
 
@@ -125,6 +126,62 @@ public class MmsForceAligner
         float[,] logProbs = RunInference(processedSamples);
         int T = logProbs.GetLength(0);
 
+        // ── Внедрить VAD-маску на уровне логитов ─────────────────────
+        int samplesPerFrame = 320;
+        int numFrames = T;
+        int vocabSize = logProbs.GetLength(1);
+
+        bool[] isSilent = new bool[numFrames];
+        for (int t = 0; t < numFrames; t++)
+        {
+            int frameStart = t * samplesPerFrame;
+            int frameEnd = Math.Min(frameStart + samplesPerFrame, samples.Length);
+            if (frameStart >= samples.Length)
+            {
+                isSilent[t] = true;
+                continue;
+            }
+
+            double sumSq = 0;
+            for (int i = frameStart; i < frameEnd; i++)
+            {
+                sumSq += samples[i] * samples[i];
+            }
+            double rms = Math.Sqrt(sumSq / (frameEnd - frameStart));
+            double rmsDb = 20 * Math.Log10(rms + 1e-10);
+
+            // Quiet threshold is -25dB on raw un-normalized samples
+            isSilent[t] = rmsDb < -25.0;
+        }
+
+        bool[] keepNormal = new bool[numFrames];
+        for (int t = 0; t < numFrames; t++)
+        {
+            if (!isSilent[t])
+            {
+                int startRange = Math.Max(0, t - runwayFrames);
+                int endRange = Math.Min(numFrames - 1, t + runwayFrames);
+                for (int r = startRange; r <= endRange; r++)
+                {
+                    keepNormal[r] = true;
+                }
+            }
+        }
+
+        for (int t = 0; t < numFrames; t++)
+        {
+            if (!keepNormal[t])
+            {
+                for (int v = 0; v < vocabSize; v++)
+                {
+                    if (v == blankId)
+                        logProbs[t, v] = 0.0f;
+                    else
+                        logProbs[t, v] = -100.0f;
+                }
+            }
+        }
+
         // ── УЛУЧШЕНИЕ 3: Двунаправленное выравнивание ─────────────────
         _logger.LogDebug("[Aligner] Запуск прямого прохода Beam Search (T={T}, N={N})...", T, N);
         var (fwdPath, fwdScore) = BeamSearchAlign(logProbs, tokenIds, blankId, forward: true);
@@ -139,8 +196,28 @@ public class MmsForceAligner
         // ── Определяем границы символов ──────────────────────────────
         var (charStartFrames, charEndFrames) = ExtractCharFrames(mergedPath, N, T);
 
+        int firstValidFrame = 0;
+        for (int t = 0; t < T; t++)
+        {
+            if (mergedPath[t] != -1)
+            {
+                firstValidFrame = t;
+                break;
+            }
+        }
+
+        int lastValidFrame = T - 1;
+        for (int t = T - 1; t >= 0; t--)
+        {
+            if (mergedPath[t] != -1)
+            {
+                lastValidFrame = t;
+                break;
+            }
+        }
+
         // ── Группировка символов в слова ──────────────────────────────
-        return BuildWordTimings(words, charStartFrames, charEndFrames);
+        return BuildWordTimings(words, charStartFrames, charEndFrames, firstValidFrame, lastValidFrame);
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -155,7 +232,7 @@ public class MmsForceAligner
         // Состояние луча: (state_index, score, backpointers)
         // state_index — текущая позиция в tokenIds (сколько токенов уже «обработано»)
         var beams = new List<(int state, float score, int[] path)>();
-        var initialPath = new int[T];
+        var initialPath = Enumerable.Repeat(-1, T).ToArray();
         beams.Add((0, logProbs[0, tokenIds[0]], initialPath));
 
         for (int t = 1; t < T; t++)
@@ -180,7 +257,8 @@ public class MmsForceAligner
                     if (tokens.Count > 0 && state < N - 1)
                     {
                         // Если следующий токен — разделитель '|', требуем blank между словами
-                        bool isWordBoundary = (nextToken == vocabDictInstance?.TryGetValue('|', out int pipeId) == true ? pipeId : -1);
+                        int pipeId = vocabDictInstance != null && vocabDictInstance.TryGetValue('|', out int pId) ? pId : -1;
+                        bool isWordBoundary = nextToken == pipeId;
                         if (isWordBoundary)
                         {
                             float blankProb = logProbs[t, blankId];
@@ -189,7 +267,7 @@ public class MmsForceAligner
                         }
                     }
 
-                    float advScore = prevScore + advanceBoost + penalty;
+                    float advScore = prevScore + advanceBoost + penalty - TransitionPenalty;
                     TryUpdateBeam(newBeams, state + 1, advScore, prevPath, t, state + 1);
                 }
 
@@ -197,7 +275,7 @@ public class MmsForceAligner
                 if (blankId >= 0)
                 {
                     float blankScore = prevScore + logProbs[t, blankId];
-                    TryUpdateBeam(newBeams, state, blankScore, prevPath, t, state);
+                    TryUpdateBeam(newBeams, state, blankScore, prevPath, t, -1);
                 }
             }
 
@@ -210,7 +288,7 @@ public class MmsForceAligner
         }
 
         if (beams.Count == 0)
-            return (new int[T], float.NegativeInfinity);
+            return (Enumerable.Repeat(-1, T).ToArray(), float.NegativeInfinity);
 
         var best = beams.OrderByDescending(b => b.score).First();
         return (best.path, best.score);
@@ -315,8 +393,15 @@ public class MmsForceAligner
         var reversed = new int[T];
         for (int t = 0; t < T; t++)
         {
-            // Инвертируем индексы состояний (пересчёт из обратного прохода)
-            reversed[T - 1 - t] = Math.Max(0, (N - 1) - path[t]);
+            if (path[t] == -1)
+            {
+                reversed[T - 1 - t] = -1;
+            }
+            else
+            {
+                // Инвертируем индексы состояний (пересчёт из обратного прохода)
+                reversed[T - 1 - t] = Math.Max(0, (N - 1) - path[t]);
+            }
         }
         return reversed;
     }
@@ -330,25 +415,43 @@ public class MmsForceAligner
     {
         var merged = new int[T];
 
-        // Для каждого фрейма: берём взвешенное среднее двух путей (50/50)
-        // Округляем к ближайшему валидному состоянию
         for (int t = 0; t < T; t++)
         {
             int fwd = fwdPath[t];
             int bwd = bwdPath[t];
 
-            // Для первой половины трека доверяем прямому пути больше,
-            // для второй половины — обратному (двунаправленное «сшивание»)
-            float weight = (float)t / T;
-            merged[t] = (int)Math.Round(fwd * (1.0f - weight) + bwd * weight);
-            merged[t] = Math.Clamp(merged[t], 0, N - 1);
+            if (fwd == -1 && bwd == -1)
+            {
+                merged[t] = -1;
+            }
+            else if (fwd == -1)
+            {
+                merged[t] = bwd;
+            }
+            else if (bwd == -1)
+            {
+                merged[t] = fwd;
+            }
+            else
+            {
+                // Для первой половины трека доверяем прямому пути больше,
+                // для второй половины — обратному (двунаправленное «сшивание»)
+                float weight = (float)t / T;
+                merged[t] = (int)Math.Round(fwd * (1.0f - weight) + bwd * weight);
+                merged[t] = Math.Clamp(merged[t], 0, N - 1);
+            }
         }
 
-        // Обеспечиваем монотонность (путь может только идти вперёд)
-        for (int t = 1; t < T; t++)
+        // Обеспечиваем монотонность (путь может только идти вперёд, пропуская blank -1)
+        int lastState = 0;
+        for (int t = 0; t < T; t++)
         {
-            if (merged[t] < merged[t - 1])
-                merged[t] = merged[t - 1];
+            if (merged[t] != -1)
+            {
+                if (merged[t] < lastState)
+                    merged[t] = lastState;
+                lastState = merged[t];
+            }
         }
 
         return merged;
@@ -403,13 +506,24 @@ public class MmsForceAligner
         for (int t = 0; t < T; t++)
         {
             int s = path[t];
-            if (s >= N) continue;
+            if (s < 0 || s >= N) continue;
             if (charStartFrames[s] == -1) charStartFrames[s] = t;
             charEndFrames[s] = t;
         }
 
+        // Find the first frame where path was not silent/blank (-1)
+        int firstValidFrame = 0;
+        for (int t = 0; t < T; t++)
+        {
+            if (path[t] != -1)
+            {
+                firstValidFrame = t;
+                break;
+            }
+        }
+
         // Интерполяция для символов без фреймов
-        int lastValidFrame = 0;
+        int lastValidFrame = firstValidFrame;
         for (int i = 0; i < N; i++)
         {
             if (charStartFrames[i] == -1)
@@ -427,7 +541,7 @@ public class MmsForceAligner
     }
 
     private List<WordTimeInfo> BuildWordTimings(
-        List<string> words, int[] charStartFrames, int[] charEndFrames)
+        List<string> words, int[] charStartFrames, int[] charEndFrames, int firstValidFrame, int lastValidFrame)
     {
         var result = new List<WordTimeInfo>();
         int firstCharIdx = 0;
@@ -437,6 +551,22 @@ public class MmsForceAligner
             int wordLen = words[wIdx].Length;
             int startFrame = charStartFrames[firstCharIdx];
             int endFrame = charEndFrames[firstCharIdx + wordLen - 1];
+
+            if (wIdx == 0)
+            {
+                if (firstValidFrame >= 0 && firstValidFrame < endFrame)
+                {
+                    startFrame = firstValidFrame;
+                }
+            }
+
+            if (wIdx == words.Count - 1)
+            {
+                if (lastValidFrame > startFrame)
+                {
+                    endFrame = lastValidFrame;
+                }
+            }
 
             var start = TimeSpan.FromMilliseconds(startFrame * 20);
             var end = TimeSpan.FromMilliseconds(endFrame * 20);

@@ -59,7 +59,15 @@ public class WhisperTranscriber
             var generator = new AssSubtitleGenerator();
             var phrases = generator.GroupWordsIntoPhrases(words);
 
-            return phrases;
+            // 4. Запускаем Silero VAD
+            var sileroModelPath = Path.Combine(_environment.ContentRootPath, "Models", "silero_vad.onnx");
+            using var vadDetector = new SileroVadDetector(sileroModelPath);
+            var vadIntervals = await vadDetector.GetSpeechIntervalsAsync(whisperVavPath);
+
+            // 5. Прогоняем сформированный список фраз через AssVadCorrector для коррекции таймингов
+            var correctedPhrases = AssVadCorrector.Correct(phrases, vadIntervals);
+
+            return correctedPhrases;
         }
         finally
         {
