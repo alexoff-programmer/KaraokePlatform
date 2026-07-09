@@ -9,5 +9,6 @@ public interface ISpeechRecognizer
     Task<List<WordTimeInfo>> TranscribeAndMergeTokensAsync(
         string wavPath,
         string language,
-        Action<int> onProgress);
+        Action<int> onProgress,
+        string? geminiApiKey = null);
 }

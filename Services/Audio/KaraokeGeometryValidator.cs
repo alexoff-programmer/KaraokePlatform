@@ -18,9 +18,11 @@ public static class KaraokeGeometryValidator
         {
             if (cleanWords[i].Start < phraseStart) cleanWords[i].Start = phraseStart;
             if (cleanWords[i].End > phraseEnd) cleanWords[i].End = phraseEnd;
-            if (cleanWords[i].End <= cleanWords[i].Start)
+
+            double minDurationMs = Math.Max(60.0, cleanWords[i].Text.Length * 15.0);
+            if (cleanWords[i].End <= cleanWords[i].Start || (cleanWords[i].End - cleanWords[i].Start).TotalMilliseconds < minDurationMs)
             {
-                cleanWords[i].End = cleanWords[i].Start.Add(TimeSpan.FromMilliseconds(100));
+                cleanWords[i].End = cleanWords[i].Start.Add(TimeSpan.FromMilliseconds(minDurationMs));
             }
         }
 
@@ -64,9 +66,11 @@ public static class KaraokeGeometryValidator
         for (int i = 1; i < cleanWords.Count; i++)
         {
             cleanWords[i].Start = cleanWords[i - 1].End;
-            if (cleanWords[i].End <= cleanWords[i].Start)
+
+            double minDurationMs = Math.Max(60.0, cleanWords[i].Text.Length * 15.0);
+            if (cleanWords[i].End <= cleanWords[i].Start || (cleanWords[i].End - cleanWords[i].Start).TotalMilliseconds < minDurationMs)
             {
-                cleanWords[i].End = cleanWords[i].Start.Add(TimeSpan.FromMilliseconds(60));
+                cleanWords[i].End = cleanWords[i].Start.Add(TimeSpan.FromMilliseconds(minDurationMs));
             }
         }
 

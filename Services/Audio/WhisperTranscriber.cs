@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using KaraokePlatform.Services.Audio.Interfaces;
 using KaraokePlatform.Services.Audio.Records;
+using KaraokePlatform.Data;
 using Microsoft.AspNetCore.Hosting;
 
 namespace KaraokePlatform.Services.Audio;
@@ -14,6 +15,7 @@ public class WhisperTranscriber
     private readonly IAudioProcessor _audioProcessor;
     private readonly ISpeechRecognizer _speechRecognizer;
     private readonly IWebHostEnvironment _environment;
+    private readonly AppDbContext _context;
 
     // На CPU разрешаем обрабатывать только ОДНУ песню в один момент времени,
     // чтобы параллельный запуск нескольких задач не парализовал хост-систему.
@@ -22,11 +24,13 @@ public class WhisperTranscriber
     public WhisperTranscriber(
         IAudioProcessor audioProcessor,
         ISpeechRecognizer speechRecognizer,
-        IWebHostEnvironment environment)
+        IWebHostEnvironment environment,
+        AppDbContext context)
     {
         _audioProcessor = audioProcessor;
         _speechRecognizer = speechRecognizer;
         _environment = environment;
+        _context = context;
     }
 
     public async Task<List<List<WordTimeInfo>>> ProcessAudioToPhrasesAsync(
@@ -51,9 +55,13 @@ public class WhisperTranscriber
             onProgress.Invoke(25);
 
             // 2. Отправляем отфильтрованный вокал напрямую в микросервис WhisperX
+            var task = await _context.KaraokeTasks.FindAsync(taskId);
+            string? geminiApiKey = task?.GeminiApiKey;
+
             var words = await _speechRecognizer.TranscribeAndMergeTokensAsync(
                 whisperVavPath, language,
-                p => onProgress.Invoke(25 + (p * 25 / 100)));
+                p => onProgress.Invoke(25 + (p * 25 / 100)),
+                geminiApiKey);
 
             // 3. Группируем полученные слова в строчки караоке
             var generator = new AssSubtitleGenerator();

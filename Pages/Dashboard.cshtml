@@ -37,7 +37,9 @@
         <div class="col-lg-4">
             <div class="card border-0 shadow-sm p-4 rounded-4">
                 <h5 class="fw-bold mb-3">Загрузить трек</h5>
-                <form method="post" asp-page-handler="Upload" enctype="multipart/form-data">
+                <form id="uploadForm" method="post" asp-page-handler="Upload" enctype="multipart/form-data">
+                    <input type="hidden" name="GeminiApiKey" id="dashboardGeminiApiKey" />
+                    <input type="hidden" name="AutoImproveEnabled" id="dashboardAutoImproveEnabled" />
                     <div class="mb-3">
                         <label class="form-label text-muted small">Файл MP3</label>
                         <input asp-for="UploadedAudio" class="form-control form-control-lg" type="file" accept=".mp3"
@@ -328,5 +330,17 @@
                                 connection.start().catch(function (err) {
                                     return console.error(err.toString());
                                 });
+
+                                // Populate hidden Gemini settings from localStorage
+                                const uploadForm = document.getElementById('uploadForm');
+                                if (uploadForm) {
+                                    uploadForm.addEventListener('submit', function() {
+                                        const apiKey = localStorage.getItem('geminiApiKey') || '';
+                                        const autoEnabled = localStorage.getItem('geminiAutoImprove') === 'true' ? 'true' : 'false';
+                                        
+                                        document.getElementById('dashboardGeminiApiKey').value = apiKey;
+                                        document.getElementById('dashboardAutoImproveEnabled').value = autoEnabled;
+                                    });
+                                }
                             </script>
                         }

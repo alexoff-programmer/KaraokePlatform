@@ -44,6 +44,9 @@ namespace KaraokePlatform.Data.Entities
 
         public string? ErrorMessage { get; set; }
 
+        public string? GeminiApiKey { get; set; }
+        public bool AutoImproveEnabled { get; set; }
+
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
         public DateTime? UpdatedAt { get; set; }

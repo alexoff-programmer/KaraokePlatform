@@ -7,6 +7,8 @@ using KaraokePlatform.Services.Audio.Records;
 using KaraokePlatform.Settings;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Options;
+using System.Net.Http;
+using System.Text.Json;
 using Whisper.net;
 using Whisper.net.Wave;
 
@@ -54,7 +56,8 @@ public class WhisperRecognizer : ISpeechRecognizer
     public async Task<List<WordTimeInfo>> TranscribeAndMergeTokensAsync(
         string wavPath,
         string language,
-        Action<int> onProgress)
+        Action<int> onProgress,
+        string? geminiApiKey = null)
     {
         if (!File.Exists(wavPath))
             throw new FileNotFoundException("Аудиофайл для транскрибации не найден", wavPath);
@@ -97,6 +100,12 @@ public class WhisperRecognizer : ISpeechRecognizer
             }
         }
 
+        // Apply Gemini lyrics correction if API key is provided
+        if (!string.IsNullOrEmpty(geminiApiKey))
+        {
+            segments = await ImproveSegmentsWithGeminiAsync(segments, geminiApiKey);
+        }
+
         onProgress?.Invoke(75);
 
         // Производим пофразовое выравнивание с помощью ONNX Force Aligner
@@ -104,8 +113,20 @@ public class WhisperRecognizer : ISpeechRecognizer
         {
             var segment = segments[i];
 
-            var segmentStart = segment.Start;
-            var segmentEnd = segment.End;
+            // 150ms leading padding and 350ms trailing padding (Audio Padding)
+            var padLeft = TimeSpan.FromMilliseconds(150);
+            var padRight = TimeSpan.FromMilliseconds(350);
+
+            var paddedStart = segment.Start - padLeft;
+            if (paddedStart < TimeSpan.Zero) paddedStart = TimeSpan.Zero;
+
+            var paddedEnd = segment.End + padRight;
+            double totalDurationSec = allSamples.Length / 16000.0;
+            if (paddedEnd > TimeSpan.FromSeconds(totalDurationSec))
+                paddedEnd = TimeSpan.FromSeconds(totalDurationSec);
+
+            var segmentStart = paddedStart;
+            var segmentEnd = paddedEnd;
             var segmentSamples = _audioProcessor.SliceSamples(allSamples, ref segmentStart, segmentEnd);
 
             if (segmentSamples.Length == 0) continue;
@@ -137,5 +158,104 @@ public class WhisperRecognizer : ISpeechRecognizer
 
         onProgress?.Invoke(100);
         return alignedWords;
+    }
+
+    private async Task<List<(string Text, TimeSpan Start, TimeSpan End)>> ImproveSegmentsWithGeminiAsync(
+        List<(string Text, TimeSpan Start, TimeSpan End)> segments,
+        string apiKey)
+    {
+        if (segments.Count == 0 || string.IsNullOrWhiteSpace(apiKey)) return segments;
+
+        try
+        {
+            var rawTexts = segments.Select(s => s.Text).ToList();
+            var jsonInput = JsonSerializer.Serialize(rawTexts);
+
+            var promptText = "You are an expert lyrics editor. " +
+                             "Translate and correct the following raw voice recognition segments of a song into correct, grammatically clean lyrics. " +
+                             "Keep the exact same number of elements in the output array as the input array. " +
+                             "Do not combine or split segments. " +
+                             "Return the output strictly in JSON format as an object containing the key \"corrected_segments\", which is an array of strings. " +
+                             "\n\nInput segments:\n" + jsonInput;
+
+            var requestBody = new
+            {
+                contents = new[]
+                {
+                    new
+                    {
+                        parts = new[]
+                        {
+                            new
+                            {
+                                text = promptText
+                            }
+                        }
+                    }
+                },
+                generationConfig = new
+                {
+                    responseMimeType = "application/json"
+                }
+            };
+
+            using var httpClient = new HttpClient();
+            httpClient.Timeout = TimeSpan.FromSeconds(30);
+
+            var requestJson = JsonSerializer.Serialize(requestBody);
+            var content = new StringContent(requestJson, System.Text.Encoding.UTF8, "application/json");
+
+            // Call Gemini 1.5 Flash (standard fast Flash model with JSON mode support)
+            var url = $"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={apiKey}";
+            
+            var response = await httpClient.PostAsync(url, content);
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorMsg = await response.Content.ReadAsStringAsync();
+                throw new Exception($"Gemini API returned status code {response.StatusCode}. Details: {errorMsg}");
+            }
+
+            var responseJson = await response.Content.ReadAsStringAsync();
+            
+            using var doc = JsonDocument.Parse(responseJson);
+            var candidates = doc.RootElement.GetProperty("candidates");
+            if (candidates.ValueKind == JsonValueKind.Array && candidates.GetArrayLength() > 0)
+            {
+                var textResponse = candidates[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
+                if (!string.IsNullOrEmpty(textResponse))
+                {
+                    using var innerDoc = JsonDocument.Parse(textResponse);
+                    var correctedEl = innerDoc.RootElement.GetProperty("corrected_segments");
+                    if (correctedEl.ValueKind == JsonValueKind.Array)
+                    {
+                        var correctedTexts = new List<string>();
+                        foreach (var el in correctedEl.EnumerateArray())
+                        {
+                            correctedTexts.Add(el.GetString() ?? string.Empty);
+                        }
+
+                        if (correctedTexts.Count == segments.Count)
+                        {
+                            var result = new List<(string Text, TimeSpan Start, TimeSpan End)>();
+                            for (int i = 0; i < segments.Count; i++)
+                            {
+                                result.Add((correctedTexts[i], segments[i].Start, segments[i].End));
+                            }
+                            return result;
+                        }
+                        else
+                        {
+                            throw new Exception($"Gemini returned a different number of segments: expected {segments.Count}, got {correctedTexts.Count}");
+                        }
+                    }
+                }
+            }
+            throw new Exception("Unexpected JSON structure in Gemini response");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Gemini Lyrics Correction Error] {ex.Message}. Falling back to raw Whisper segments.");
+            return segments;
+        }
     }
 }

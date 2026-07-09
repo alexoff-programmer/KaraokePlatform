@@ -226,10 +226,22 @@ public class MmsForceAligner
     //  УЛУЧШЕНИЕ 1: CTC-Beam Search с языковым буcтингом
     // ─────────────────────────────────────────────────────────────────
     private (int[] path, float score) BeamSearchAlign(
-        float[,] logProbs, int[] tokenIds, int blankId, bool forward)
+        float[,] logProbs, int[] tokenIds, int blankId, bool[] isSilent, bool forward)
     {
         int T = logProbs.GetLength(0);
         int N = tokenIds.Length;
+
+        // Precalculate active (non-silent) frames up to t
+        int[] activeFramesUpTo = new int[T];
+        int totalActiveFrames = 0;
+        for (int t = 0; t < T; t++)
+        {
+            if (!isSilent[t])
+            {
+                totalActiveFrames++;
+            }
+            activeFramesUpTo[t] = totalActiveFrames;
+        }
 
         // Состояние луча: (state_index, score, backpointers)
         // state_index — текущая позиция в tokenIds (сколько токенов уже «обработано»)
@@ -241,8 +253,19 @@ public class MmsForceAligner
         {
             var newBeams = new Dictionary<int, (float score, int[] path)>();
 
+            // Sakoe-Chiba corridor check
+            int activeFrames = activeFramesUpTo[t];
+            double progress = totalActiveFrames > 0 ? (double)activeFrames / totalActiveFrames : (double)t / T;
+            int idealCharIdx = (int)(progress * N);
+
             foreach (var (state, prevScore, prevPath) in beams)
             {
+                // Dynamic corridor width of 10 characters to prevent premature leaps
+                if (state < idealCharIdx - 10 || state > idealCharIdx + 10)
+                {
+                    continue;
+                }
+
                 // Вариант 1: ОСТАЁМСЯ на текущем токене (stay)
                 float stayScore = prevScore + GetBoostedLogProb(logProbs, t, tokenIds[state], state, tokenIds);
                 TryUpdateBeam(newBeams, state, stayScore, prevPath, t, state);
@@ -291,11 +314,15 @@ public class MmsForceAligner
             }
 
             // Обрезаем до BeamWidth лучших лучей по score
-            beams = newBeams
-                .OrderByDescending(kvp => kvp.Value.score)
-                .Take(BeamWidth)
-                .Select(kvp => (kvp.Key, kvp.Value.score, kvp.Value.path))
-                .ToList();
+            if (newBeams.Count > 0)
+            {
+                beams = newBeams
+                    .OrderByDescending(kvp => kvp.Value.score)
+                    .Take(BeamWidth)
+                    .Select(kvp => (kvp.Key, kvp.Value.score, kvp.Value.path))
+                    .ToList();
+            }
+            // else: keep previous beams if corridor pruned everything (safety fallback)
         }
 
         if (beams.Count == 0)

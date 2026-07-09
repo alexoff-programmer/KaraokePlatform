@@ -57,6 +57,12 @@ public class DashboardModel : PageModel
     [BindProperty]
     public bool RemoveVocal { get; set; } = true; // по умолчанию включено
 
+    [BindProperty]
+    public string? GeminiApiKey { get; set; }
+
+    [BindProperty]
+    public bool AutoImproveEnabled { get; set; }
+
     public List<KaraokeTask> UserTasks { get; set; } = new();
 
     public string ErrorMessage { get; set; } = string.Empty;
@@ -160,6 +166,8 @@ public class DashboardModel : PageModel
             RemoveVocal = this.RemoveVocal,
             SeparationQuality = SelectedQuality,
             Status = TaskStatus.InQueue,
+            GeminiApiKey = this.AutoImproveEnabled ? this.GeminiApiKey : null,
+            AutoImproveEnabled = this.AutoImproveEnabled,
             CreatedAt = DateTime.UtcNow
         };
 

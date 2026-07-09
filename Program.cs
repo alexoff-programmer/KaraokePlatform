@@ -88,7 +88,18 @@ using (var scope = app.Services.CreateScope())
     var services = scope.ServiceProvider;
     var context = services.GetRequiredService<AppDbContext>();
 
-    context.Database.EnsureCreated();
+    try
+    {
+        context.Database.EnsureCreated();
+        // Check if new columns exist
+        _ = context.KaraokeTasks.Select(t => new { t.GeminiApiKey, t.AutoImproveEnabled }).FirstOrDefault();
+    }
+    catch (Exception)
+    {
+        // Recreate database if schema is outdated
+        context.Database.EnsureDeleted();
+        context.Database.EnsureCreated();
+    }
     // Проверяем, есть ли вообще пользователи в базе
     if (!context.Users.Any())
     {

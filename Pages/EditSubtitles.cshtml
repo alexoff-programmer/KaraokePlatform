@@ -8,7 +8,12 @@
     <div class="row justify-content-center">
         <div class="col-lg-8">
             <div class="card border-0 shadow-sm rounded-4 p-4">
-                <h2 class="fw-bold text-dark mb-1">Проверка распознанного текста</h2>
+                <div class="d-flex align-items-center justify-content-between mb-1">
+                    <h2 class="fw-bold text-dark mb-0">Проверка распознанного текста</h2>
+                    <button type="button" class="btn btn-outline-primary btn-sm rounded-3 fw-bold px-3 py-2" data-bs-toggle="modal" data-bs-target="#geminiModal">
+                        <i class="bi bi-magic me-1"></i> Улучшить с Gemini
+                    </button>
+                </div>
                 <p class="text-muted mb-4">Файл: <span class="badge bg-secondary">@Model.OriginalFileName</span></p>
 
                 <div class="alert alert-info small rounded-3">
@@ -17,7 +22,8 @@
                 </div>
 
                 <form method="post" asp-page-handler="Save">
-                    <input type="hidden" asp-for="TaskId" />
+                    @Html.AntiForgeryToken()
+                    <input type="hidden" asp-for="TaskId" id="taskIdHidden" />
 
                     <div class="vstack gap-3 mb-4" style="max-height: 60vh; overflow-y: auto; padding-right: 10px;">
                         @for (int i = 0; i < Model.EditedLines.Count; i++)
@@ -41,3 +47,111 @@
         </div>
     </div>
 </div>
+
+<!-- Gemini Settings and Action Modal -->
+<div class="modal fade" id="geminiModal" tabindex="-1" aria-labelledby="geminiModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow rounded-4">
+            <div class="modal-header border-bottom-0">
+                <h5 class="modal-title fw-bold" id="geminiModalLabel"><i class="bi bi-magic me-2 text-primary"></i>Улучшение субтитров с Gemini</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body pb-4">
+                <div class="mb-3">
+                    <label for="geminiApiKey" class="form-label small fw-bold text-muted">Gemini API Key</label>
+                    <input type="password" id="geminiApiKey" class="form-control form-control-lg rounded-3" placeholder="AIzaSy..." autocomplete="off" />
+                    <div class="form-text small text-muted">Ключ сохраняется локально в вашем браузере.</div>
+                </div>
+                <div class="form-check form-switch mb-4">
+                    <input class="form-check-input" type="checkbox" id="geminiAutoImprove" />
+                    <label class="form-check-label small fw-bold text-muted" for="geminiAutoImprove">Автоматическое улучшение при загрузке</label>
+                    <div class="form-text small text-muted">Если включено, новые песни будут автоматически улучшаться перед ручным редактированием.</div>
+                </div>
+                
+                <div class="vstack gap-2">
+                    <button type="button" id="btnRunGeminiImprovement" class="btn btn-primary btn-lg rounded-3 w-100 fw-bold">
+                        <i class="bi bi-play-circle me-2"></i>Запустить улучшение текста
+                    </button>
+                    <button type="button" id="btnSaveGeminiSettings" class="btn btn-light btn-lg rounded-3 w-100">
+                        Сохранить настройки
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        const apiKeyInput = document.getElementById('geminiApiKey');
+        const autoImproveCheckbox = document.getElementById('geminiAutoImprove');
+
+        // Load settings from localStorage
+        function loadSettings() {
+            apiKeyInput.value = localStorage.getItem('geminiApiKey') || '';
+            autoImproveCheckbox.checked = localStorage.getItem('geminiAutoImprove') === 'true';
+        }
+
+        // Save settings to localStorage
+        function saveSettings() {
+            localStorage.setItem('geminiApiKey', apiKeyInput.value.trim());
+            localStorage.setItem('geminiAutoImprove', autoImproveCheckbox.checked ? 'true' : 'false');
+            alert('Настройки Gemini успешно сохранены!');
+        }
+
+        // Run manual Gemini lyrics correction and MMS realignment pipeline
+        async function runGeminiImprovement() {
+            const apiKey = apiKeyInput.value.trim();
+            if (!apiKey) {
+                alert('Пожалуйста, введите корректный Gemini API Key!');
+                return;
+            }
+
+            // Save key first
+            localStorage.setItem('geminiApiKey', apiKey);
+            localStorage.setItem('geminiAutoImprove', autoImproveCheckbox.checked ? 'true' : 'false');
+
+            const btnRun = document.getElementById('btnRunGeminiImprovement');
+            const originalHtml = btnRun.innerHTML;
+            btnRun.disabled = true;
+            btnRun.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Выравнивание ИИ...`;
+
+            try {
+                const response = await fetch('?handler=ImproveWithGemini', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'RequestVerificationToken': document.querySelector('input[name="__RequestVerificationToken"]').value
+                    },
+                    body: JSON.stringify({
+                        geminiApiKey: apiKey
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(errorText || 'Внутренняя ошибка сервера.');
+                }
+
+                const result = await response.json();
+                if (result.success) {
+                    alert('Субтитры успешно улучшены и заново выровнены с помощью Gemini!');
+                    location.reload();
+                } else {
+                    alert('Ошибка улучшения: ' + (result.message || 'неизвестная ошибка.'));
+                }
+            } catch (err) {
+                alert('Произошла критическая ошибка: ' + err.message);
+            } finally {
+                btnRun.disabled = false;
+                btnRun.innerHTML = originalHtml;
+            }
+        }
+
+        document.getElementById('btnSaveGeminiSettings').addEventListener('click', saveSettings);
+        document.getElementById('btnRunGeminiImprovement').addEventListener('click', runGeminiImprovement);
+
+        // Initialize modal inputs
+        loadSettings();
+    </script>
+}
