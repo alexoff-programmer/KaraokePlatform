@@ -17,13 +17,13 @@ public class QueueChannel
     }
 
     // Метод для веб-страницы: положить задачу в очередь
-    public async ValueTask AddTaskAsync(Guid taskId, CancellationToken cancellationToken = default)
+    public virtual async ValueTask AddTaskAsync(Guid taskId, CancellationToken cancellationToken = default)
     {
         await _queue.Writer.WriteAsync(taskId, cancellationToken);
     }
 
     // Метод для воркера: читать задачи из очереди
-    public IAsyncEnumerable<Guid> ReadTasksAsync(CancellationToken cancellationToken = default)
+    public virtual IAsyncEnumerable<Guid> ReadTasksAsync(CancellationToken cancellationToken = default)
     {
         return _queue.Reader.ReadAllAsync(cancellationToken);
     }

@@ -38,7 +38,6 @@ builder.Services.AddScoped<UserService>();
 builder.Services.Configure<WhisperSettings>(builder.Configuration.GetSection("WhisperSettings"));
 builder.Services.AddScoped<IAudioProcessor, AudioProcessor>();
 builder.Services.AddScoped<ISpeechRecognizer, WhisperRecognizer>();
-builder.Services.AddScoped<MmsForceAligner>();
 builder.Services.AddScoped<ISubtitleGenerator, AssSubtitleGenerator>();
 builder.Services.AddScoped<WhisperTranscriber>();
 
@@ -49,6 +48,7 @@ builder.Services.AddScoped<VideoRenderer>();
 // РЕГИСТРАЦИЯ КОНВЕЙЕРА ОБРАБОТКИ
 builder.Services.AddSingleton<QueueChannel>(); // Очередь должна быть одна на всё приложение
 builder.Services.AddSingleton<TaskCancellationManager>();
+builder.Services.AddSingleton<MmsForceAligner>();
 builder.Services.AddHostedService<VideoProcessingWorker>(); // Запуск фонового процесса
 
 builder.Services.AddRazorPages(options =>
@@ -61,6 +61,15 @@ builder.Services.AddRazorPages(options =>
 builder.Services.AddSignalR();
 
 var app = builder.Build();
+
+using (var scope = app.Services.CreateScope())
+{
+    var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    context.Database.OpenConnection();
+    using var command = context.Database.GetDbConnection().CreateCommand();
+    command.CommandText = "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;";
+    command.ExecuteNonQuery();
+}
 
 // Конфигурация HTTP-конвейера
 if (!app.Environment.IsDevelopment())

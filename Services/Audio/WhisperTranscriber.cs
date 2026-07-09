@@ -33,7 +33,7 @@ public class WhisperTranscriber
         _context = context;
     }
 
-    public async Task<List<List<WordTimeInfo>>> ProcessAudioToPhrasesAsync(
+    public virtual async Task<List<List<WordTimeInfo>>> ProcessAudioToPhrasesAsync(
         Guid taskId,
         string mp3FilePath,
         string language,

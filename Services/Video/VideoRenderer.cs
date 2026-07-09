@@ -16,7 +16,7 @@ public class VideoRenderer
     }
 
     // ИСПРАВЛЕНО: Добавили параметры backgroundImagePath и videoFormat в метод
-    public async Task RenderKaraokeVideoAsync(string audioPath, string assSubtitlesPath, string outputVideoPath, string? backgroundImagePath = null, string? videoFormat = null)
+    public virtual async Task RenderKaraokeVideoAsync(string audioPath, string assSubtitlesPath, string outputVideoPath, string? backgroundImagePath = null, string? videoFormat = null)
     {
         if (!File.Exists(audioPath)) throw new FileNotFoundException("Исходный аудиофайл не найден.");
         if (!File.Exists(assSubtitlesPath)) throw new FileNotFoundException("Файл субтитров не найден.");
@@ -25,11 +25,9 @@ public class VideoRenderer
         int videoW = isLandscape ? 1920 : 1080;
         int videoH = isLandscape ? 1080 : 1920;
 
-        // Convert to relative paths to avoid Windows drive letters and colon issues in FFmpeg filter graph
-        string relativeAssPath = Path.GetRelativePath(Directory.GetCurrentDirectory(), assSubtitlesPath);
-        string escapedAssPath = relativeAssPath.Replace("\\", "/");
-        // Use local Fonts folder for fontsdir (fully relative)
-        string fontsDir = "Fonts";
+        // Escape absolute paths for FFmpeg filter graph to avoid issues with colons and backslashes
+        string escapedAssPath = assSubtitlesPath.Replace("\\", "/").Replace(":", "\\:").Replace("'", "'\\''");
+        string escapedFontsDir = _fontsFolder.Replace("\\", "/").Replace(":", "\\:").Replace("'", "'\\''");
 
         double audioDurationSeconds;
         audioDurationSeconds = await GetAudioDurationAsync(audioPath);
@@ -44,7 +42,7 @@ public class VideoRenderer
             arguments = $"-f lavfi -t {durationStr} -i \"color=c=black:s={videoW}x{videoH}:r=30\" " +
                         $"-i \"{audioPath}\" " +
                         $"-filter_complex \"" +
-                        $"[0:v]subtitles=filename='{escapedAssPath}':fontsdir='{fontsDir}'[outv]\" " +
+                        $"[0:v]subtitles=filename='{escapedAssPath}':fontsdir='{escapedFontsDir}'[outv]\" " +
                         $"-map \"[outv]\" -map 1:a " +
                         $"-c:v libx264 -preset ultrafast -profile:v high -level:v 4.1 -pix_fmt yuv420p -crf 23 -c:a aac -y \"{outputVideoPath}\"";
         }
@@ -56,7 +54,7 @@ public class VideoRenderer
                         $"-filter_complex \"" +
                         $"[0:v]scale={videoW}:{videoH}:force_original_aspect_ratio=increase," +
                         $"crop={videoW}:{videoH}," +
-                        $"subtitles=filename='{escapedAssPath}':fontsdir='{fontsDir}'[outv]\" " +
+                        $"subtitles=filename='{escapedAssPath}':fontsdir='{escapedFontsDir}'[outv]\" " +
                         $"-map \"[outv]\" -map 1:a " +
                         $"-c:v libx264 -preset ultrafast -profile:v high -level:v 4.1 -pix_fmt yuv420p -crf 23 -c:a aac -y \"{outputVideoPath}\"";
         }

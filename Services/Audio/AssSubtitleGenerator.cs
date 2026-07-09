@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -13,26 +14,57 @@ public class AssSubtitleGenerator : ISubtitleGenerator
     private static readonly TimeSpan TimeShift = TimeSpan.FromMilliseconds(200);
     private const double InstrumentSilenceThresholdMs = 1200;
 
-    // Настройки аккуратного последовательного отображения без каши
-    private int FadeTimeMs = 0;
-    private int FadeBufferMs = 50; // Небольшой зазор между физическим исчезновением одной строки и появлением другой
-    private int MaxHoldAfterSpeechMs = 500;
+    private int FadeTimeMs = 150;
+    private int FadeBufferMs = 50;
 
-    // На сколько секунд раньше строка должна появиться на экране для подготовки (Lead-In Time)
     private static readonly TimeSpan LeadInTime = TimeSpan.FromSeconds(1.5);
 
-    // Регулярное выражение находит любые знаки препинания в начале или конце строки, ИГНОРИРУЯ дефисы и апострофы внутри слова
     private static readonly Regex PunctuationCleanRegex = new Regex(@"(^[\p{P}&&[^\-']]+)|([\p{P}&&[^\-']]+$)", RegexOptions.Compiled);
 
-    // Maps UI font names to system-installed font names in the Docker container
     private static string MapFontName(string? uiFont) => uiFont switch
     {
         "Inter" => "Inter",
         "Outfit" => "Outfit",
         "Courier New" => "Courier New",
         "Montserrat" => "Montserrat",
+        "Oswald" => "Oswald",
+        "Rubik" => "Rubik",
+        "Comfortaa" => "Comfortaa",
+        "Lobster" => "Lobster",
+        "Pacifico" => "Pacifico",
         _ => "Outfit"
     };
+
+    // Вспомогательный метод для перевода веб-цветов (#RRGGBB или названия) в формат ASS (AABBGGRR)
+    private string ConvertToAssColor(string? uiColor, string defaultAssColor)
+    {
+        if (string.IsNullOrWhiteSpace(uiColor)) return defaultAssColor;
+
+        uiColor = uiColor.Trim().ToLower();
+
+        // Если пришел HEX из ColorPicker (#RRGGBB или RRGGBB)
+        if (uiColor.StartsWith("#")) uiColor = uiColor.Substring(1);
+
+        if (uiColor.Length == 6 && Regex.IsMatch(uiColor, @"^[0-9a-f]{6}$"))
+        {
+            string r = uiColor.Substring(0, 2);
+            string g = uiColor.Substring(2, 2);
+            string b = uiColor.Substring(4, 2);
+            // Формат ASS требует инвертированный порядок: Синий, Зеленый, Красный (BBGGRR)
+            return $"&H00{b}{g}{r}";
+        }
+
+        // Именованные фолбеки, если из UI прилетели строки
+        return uiColor switch
+        {
+            "lightgray" => "&H00D3D3D3",
+            "cyan" => "&H00FFFF00",
+            "yellow" => "&H0000FFFF",
+            "red" => "&H000000FF",
+            "green" => "&H0000FF00",
+            _ => defaultAssColor
+        };
+    }
 
     public string GenerateKaraokeMarkup(List<WordTimeInfo> words, string? fontName = null, string? fillStyle = null, string? primaryColor = null, string? secondaryColor = null, string? videoFormat = null)
     {
@@ -43,7 +75,35 @@ public class AssSubtitleGenerator : ISubtitleGenerator
 
         var phrases = GroupWordsIntoPhrases(words);
         ExtendPhraseEnds(phrases);
-        BuildDialogueLines(sb, phrases);
+        BuildDialogueLines(sb, phrases, fillStyle);
+
+        return sb.ToString();
+    }
+
+    public string GenerateKaraokeMarkupFromPhrases(List<List<WordTimeInfo>> phrases, string? fontName = null, string? fillStyle = null, string? primaryColor = null, string? secondaryColor = null, string? videoFormat = null)
+    {
+        if (phrases == null || phrases.Count == 0) return string.Empty;
+
+        var sb = new StringBuilder();
+        BuildAssHeader(sb, fontName, fillStyle, primaryColor, secondaryColor, videoFormat);
+
+        var phrasesCopy = new List<List<WordTimeInfo>>();
+        foreach (var phrase in phrases)
+        {
+            if (phrase == null || phrase.Count == 0) continue;
+            var phraseCopy = phrase.Select(w => w with { }).ToList();
+            phrasesCopy.Add(phraseCopy);
+        }
+
+        if (phrasesCopy.Count == 0) return string.Empty;
+
+        for (int i = 0; i < phrasesCopy.Count; i++)
+        {
+            phrasesCopy[i] = InterpolateWordTimings(phrasesCopy[i]);
+        }
+
+        ExtendPhraseEnds(phrasesCopy);
+        BuildDialogueLinesFromPhrases(sb, phrasesCopy, fillStyle);
 
         return sb.ToString();
     }
@@ -55,23 +115,10 @@ public class AssSubtitleGenerator : ISubtitleGenerator
         int resX = isLandscape ? 1920 : 1080;
         int resY = isLandscape ? 1080 : 1920;
         int fontSize = isLandscape ? 52 : 68;
-        
-        var priCol = primaryColor switch
-        {
-            "lightgray" => "&H00D3D3D3",
-            "cyan" => "&H00FFFF00",
-            "yellow" => "&H0000FFFF",
-            _ => "&H00FFFFFF" // Default white
-        };
 
-        var activeColor = secondaryColor switch
-        {
-            "red" => "&H000000FF",
-            "yellow" => "&H0000FFFF",
-            "green" => "&H0000FF00",
-            "cyan" => "&H00FFFF00",
-            _ => "&H00F04CFF" // Default purple
-        };
+        // Корректно парсим цвета из UI
+        var activeColor = ConvertToAssColor(secondaryColor, "&H00F04CFF"); // Цвета закраски активного слога
+        var inactiveColor = ConvertToAssColor(primaryColor, "&H00FFFFFF");  // Цвет ожидающего текста
 
         sb.AppendLine("[Script Info]");
         sb.AppendLine("ScriptType: v4.00+");
@@ -81,438 +128,16 @@ public class AssSubtitleGenerator : ISubtitleGenerator
         sb.AppendLine();
         sb.AppendLine("[V4+ Styles]");
         sb.AppendLine("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding");
-        sb.AppendLine($"Style: KaraokeStyle,{font},{fontSize},{activeColor},{priCol},&H00000000,&H00000000,-1,0,0,0,100,100,2,0,1,2,0,5,100,100,0,1");
+
+        // Тень и обводка выставляются в темный цвет для читаемости на любом фоне
+        sb.AppendLine($"Style: KaraokeStyle,{font},{fontSize},{activeColor},{inactiveColor},&H001A1A1A,&H00000000,-1,0,0,0,100,100,2,0,1,3,1,5,100,100,0,1");
         sb.AppendLine();
         sb.AppendLine("[Events]");
         sb.AppendLine("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text");
     }
 
-    public List<List<WordTimeInfo>> GroupWordsIntoPhrases(List<WordTimeInfo> words)
-    {
-        var phrases = new List<List<WordTimeInfo>>();
-        if (words == null || words.Count == 0) return phrases;
-
-        // Внедряем защитную интерполяцию для выравнивания перекрытий и нулевых длительностей
-        var interpolatedWords = InterpolateWordTimings(words);
-
-        var currentBlock = new List<WordTimeInfo>();
-
-        for (int i = 0; i < interpolatedWords.Count; i++)
-        {
-            var currWord = interpolatedWords[i];
-
-            // УМНАЯ ПОСТОБРАБОТКА: очищаем слово от знаков препинания по краям и переводим в нижний регистр
-            string cleanText = PunctuationCleanRegex.Replace(currWord.Text ?? string.Empty, string.Empty).ToLower();
-
-            if (string.IsNullOrWhiteSpace(cleanText)) continue;
-
-            var processedWord = currWord with { Text = cleanText };
-
-            if (currentBlock.Count > 0)
-            {
-                var prevWord = currentBlock.Last();
-                TimeSpan prevEnd = prevWord.End > prevWord.Start ? prevWord.End : prevWord.Start + TimeSpan.FromMilliseconds(200);
-                double gapMs = (processedWord.Start - prevEnd).TotalMilliseconds;
-
-                // Если пауза между словами больше 1.5 секунд, начинаем новый блок
-                bool isPauseTooLong = gapMs > 1500;
-
-                // Проверяем, помещается ли новое слово в лимит 2 строк по 40 символов
-                bool canFit = CanFitInTwoLines(currentBlock, processedWord, 40);
-
-                if (isPauseTooLong || !canFit)
-                {
-                    CapitalizeFirstWord(currentBlock);
-                    phrases.Add(currentBlock);
-                    currentBlock = new List<WordTimeInfo>();
-                }
-            }
-
-            currentBlock.Add(processedWord);
-        }
-
-        if (currentBlock.Count > 0)
-        {
-            CapitalizeFirstWord(currentBlock);
-            phrases.Add(currentBlock);
-        }
-
-        return phrases;
-    }
-
-    private bool CanFitInTwoLines(List<WordTimeInfo> blockWords, WordTimeInfo newWord, int maxLineLen)
-    {
-        var tempWords = new List<WordTimeInfo>(blockWords) { newWord };
-        
-        // Считаем общую длину, если все в одну строку
-        int totalLen = tempWords.Sum(w => w.Text.Length) + tempWords.Count - 1;
-        if (totalLen <= maxLineLen) return true;
-
-        // Ищем хотя бы один вариант разбиения на 2 строки, где каждая <= maxLineLen
-        for (int k = 1; k < tempWords.Count; k++)
-        {
-            int line1Len = tempWords.Take(k).Sum(w => w.Text.Length) + k - 1;
-            int line2Len = tempWords.Skip(k).Sum(w => w.Text.Length) + (tempWords.Count - k) - 1;
-
-            if (line1Len <= maxLineLen && line2Len <= maxLineLen)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private int GetBestSplitIndex(List<WordTimeInfo> blockWords, int maxLineLen)
-    {
-        int totalLen = blockWords.Sum(w => w.Text.Length) + blockWords.Count - 1;
-        if (totalLen <= maxLineLen) return -1; // Не нужно переносить
-
-        int bestK = -1;
-        int minDiff = int.MaxValue;
-
-        for (int k = 1; k < blockWords.Count; k++)
-        {
-            int line1Len = blockWords.Take(k).Sum(w => w.Text.Length) + k - 1;
-            int line2Len = blockWords.Skip(k).Sum(w => w.Text.Length) + (blockWords.Count - k) - 1;
-
-            if (line1Len <= maxLineLen && line2Len <= maxLineLen)
-            {
-                int diff = Math.Abs(line1Len - line2Len);
-                if (diff < minDiff)
-                {
-                    minDiff = diff;
-                    bestK = k;
-                }
-            }
-        }
-
-        // Если не нашли идеального сплита, сплитим по середине
-        if (bestK == -1)
-        {
-            bestK = blockWords.Count / 2;
-        }
-
-        return bestK;
-    }
-
-    private void CapitalizeFirstWord(List<WordTimeInfo> phrase)
-    {
-        if (phrase == null || phrase.Count == 0) return;
-
-        var firstWordInfo = phrase[0];
-        string word = firstWordInfo.Text;
-
-        if (!string.IsNullOrEmpty(word))
-        {
-            // Делаем заглавной строго первую букву всей фразы
-            string capitalizedWord = char.ToUpper(word[0]) + word[1..];
-            phrase[0] = firstWordInfo with { Text = capitalizedWord };
-        }
-    }
-
-    private double EaseInOutCubic(double x)
-    {
-        return x < 0.5 ? 4 * x * x * x : 1 - Math.Pow(-2 * x + 2, 3) / 2;
-    }
-
-    private void AppendCharacterLevelKaraoke(StringBuilder lineBuilder, string wordText, int totalWordCs)
-    {
-        if (string.IsNullOrEmpty(wordText)) return;
-
-        int len = wordText.Length;
-        var charDurations = new int[len];
-        int sumCs = 0;
-
-        for (int i = 0; i < len; i++)
-        {
-            double pStart = (double)i / len;
-            double pEnd = (double)(i + 1) / len;
-
-            double eStart = EaseInOutCubic(pStart);
-            double eEnd = EaseInOutCubic(pEnd);
-
-            double durationMs = (eEnd - eStart) * (totalWordCs * 10.0);
-            int durationCs = (int)Math.Round(durationMs / 10.0);
-
-            // Sanitization: minimum 1 centisecond per character
-            if (durationCs <= 0) durationCs = 1;
-
-            charDurations[i] = durationCs;
-            sumCs += durationCs;
-        }
-
-        // Checksum balancing: adjust longest duration character
-        int diff = totalWordCs - sumCs;
-        if (diff != 0)
-        {
-            int bestIdx = 0;
-            int maxVal = charDurations[0];
-            for (int i = 1; i < len; i++)
-            {
-                if (charDurations[i] > maxVal)
-                {
-                    maxVal = charDurations[i];
-                    bestIdx = i;
-                }
-            }
-
-            charDurations[bestIdx] = Math.Max(1, charDurations[bestIdx] + diff);
-        }
-
-        // Generate character-level tags
-        for (int i = 0; i < len; i++)
-        {
-            lineBuilder.Append($"{{\\kf{charDurations[i]}}}{wordText[i]}");
-        }
-    }
-
-    private void ExtendPhraseEnds(List<List<WordTimeInfo>> phrases)
-    {
-        for (int i = 0; i < phrases.Count; i++)
-        {
-            var currentPhraseWords = phrases[i];
-            var lastWord = currentPhraseWords.Last();
-
-            TimeSpan maxAllowedEnd = (i < phrases.Count - 1)
-                ? phrases[i + 1].First().Start - TimeSpan.FromMilliseconds(FadeBufferMs)
-                : lastWord.End + TimeSpan.FromMilliseconds(1200);
-
-            TimeSpan desiredEnd = lastWord.End + TimeSpan.FromMilliseconds(450);
-            if (desiredEnd > maxAllowedEnd) desiredEnd = maxAllowedEnd;
-
-            if (desiredEnd > lastWord.Start)
-            {
-                lastWord.End = desiredEnd;
-            }
-        }
-    }
-
-    private void BuildDialogueLines(StringBuilder sb, List<List<WordTimeInfo>> phrases)
-    {
-        TimeSpan absoluteMinStart = TimeSpan.Zero;
-
-        for (int i = 0; i < phrases.Count; i++)
-        {
-            var phrase = phrases[i];
-
-            // 1. Вычисляем фактический конец строки (Event.End = Phrase.End)
-            var phraseStart = phrase.First().Start - TimeShift;
-            var phraseEnd = phrase.Last().End - TimeShift;
-
-            if (phraseStart < TimeSpan.Zero) phraseStart = TimeSpan.Zero;
-            if (phraseEnd < phraseStart) phraseEnd = phraseStart;
-
-            // Event.Start = Phrase.Start - LeadInTime
-            var lineStart = phraseStart - LeadInTime;
-            if (lineStart < TimeSpan.Zero) lineStart = TimeSpan.Zero;
-
-            // Гарантируем монотонность
-            if (lineStart < absoluteMinStart)
-            {
-                lineStart = absoluteMinStart;
-            }
-            if (lineStart > phraseStart) lineStart = phraseStart;
-
-            var lineEnd = phraseEnd;
-            if (lineEnd < lineStart) lineEnd = lineStart + TimeSpan.FromMilliseconds(500);
-
-            absoluteMinStart = lineEnd + TimeSpan.FromMilliseconds(FadeBufferMs);
-
-            string assStart = FormatTimeSpanForAss(lineStart);
-            string assEnd = FormatTimeSpanForAss(lineEnd);
-
-            var lineBuilder = new StringBuilder($"{{\\fad({FadeTimeMs}, {FadeTimeMs})}}");
-
-            // Стартовый тег ожидания {\k<сантисекунды>}
-            int delayCs = (int)Math.Round((phraseStart - lineStart).TotalMilliseconds / 10.0);
-            if (delayCs > 0)
-            {
-                lineBuilder.Append($"{{\\k{delayCs}}}");
-            }
-
-            TimeSpan currentTime = phraseStart;
-
-            // Находим точку сплита на две строки
-            int splitIdx = GetBestSplitIndex(phrase, 40);
-
-            for (int j = 0; j < phrase.Count; j++)
-            {
-                var word = phrase[j];
-                var shiftedWordStart = word.Start - TimeShift;
-                var shiftedWordEnd = word.End - TimeShift;
-
-                if (shiftedWordStart < TimeSpan.Zero) shiftedWordStart = TimeSpan.Zero;
-                if (shiftedWordEnd < shiftedWordStart) shiftedWordEnd = shiftedWordStart;
-
-                if (shiftedWordStart < currentTime)
-                {
-                    var overlap = currentTime - shiftedWordStart;
-                    shiftedWordStart = currentTime;
-                    shiftedWordEnd += overlap;
-                }
-
-                var pauseDuration = shiftedWordStart - currentTime;
-                if (pauseDuration.TotalMilliseconds > 10)
-                {
-                    int pauseCs = (int)Math.Round(pauseDuration.TotalMilliseconds / 10.0);
-                    if (pauseCs > 0) lineBuilder.Append($"{{\\kf{pauseCs}}}");
-                }
-
-                int wordCs = (int)Math.Round((shiftedWordEnd - shiftedWordStart).TotalMilliseconds / 10.0);
-                if (wordCs <= 0) wordCs = 1;
-
-                // Перенос строки перед текущим словом, если достигли splitIdx
-                if (j == splitIdx)
-                {
-                    lineBuilder.Append("\\N");
-                }
-
-                // В конце строки пробел не нужен, также как и перед переносом строки \N
-                string trailingSpace = (j != phrase.Count - 1 && j != splitIdx - 1) ? " " : "";
-                AppendCharacterLevelKaraoke(lineBuilder, word.Text, wordCs);
-                lineBuilder.Append(trailingSpace);
-
-                currentTime = shiftedWordEnd;
-            }
-
-            if (currentTime < lineEnd)
-            {
-                int finalWaitCs = (int)Math.Round((lineEnd - currentTime).TotalMilliseconds / 10.0);
-                if (finalWaitCs > 0) lineBuilder.Append($"{{\\kf{finalWaitCs}}}");
-            }
-
-            sb.AppendLine($"Dialogue: 0,{assStart},{assEnd},KaraokeStyle,,0,0,0,,{lineBuilder}");
-        }
-    }
-
-    private string FormatTimeSpanForAss(TimeSpan ts)
-    {
-        long totalCentiseconds = (long)Math.Round(ts.TotalMilliseconds / 10.0);
-
-        long cs = totalCentiseconds % 100;
-        long totalSeconds = totalCentiseconds / 100;
-        long secs = totalSeconds % 60;
-        long totalMinutes = totalSeconds / 60;
-        long mins = totalMinutes % 60;
-        long hours = totalMinutes / 60;
-
-        return $"{hours:D1}:{mins:D2}:{secs:D2}.{cs:D2}";
-    }
-
-    private List<WordTimeInfo> InterpolateWordTimings(List<WordTimeInfo> words)
-    {
-        if (words == null || words.Count == 0) return new List<WordTimeInfo>();
-
-        var cleanWords = new List<WordTimeInfo>();
-        foreach (var w in words)
-        {
-            cleanWords.Add(w with { });
-        }
-
-        // 1. Исправляем нулевую или отрицательную длительность каждого отдельного слова
-        for (int i = 0; i < cleanWords.Count; i++)
-        {
-            if (cleanWords[i].End <= cleanWords[i].Start)
-            {
-                cleanWords[i].End = cleanWords[i].Start.Add(TimeSpan.FromMilliseconds(150));
-            }
-        }
-
-        // 2. Исправляем перекрытия и взаимное наложение слов
-        int idx = 0;
-        while (idx < cleanWords.Count)
-        {
-            int startIdx = idx;
-            TimeSpan maxTime = cleanWords[idx].End;
-            int endIdx = idx;
-
-            while (endIdx + 1 < cleanWords.Count && cleanWords[endIdx + 1].Start < maxTime)
-            {
-                endIdx++;
-                if (cleanWords[endIdx].End > maxTime)
-                {
-                    maxTime = cleanWords[endIdx].End;
-                }
-            }
-
-            if (endIdx > startIdx)
-            {
-                TimeSpan totalSpanStart = cleanWords[startIdx].Start;
-                TimeSpan totalSpanEnd = maxTime;
-                double totalDurationMs = (totalSpanEnd - totalSpanStart).TotalMilliseconds;
-
-                double totalLength = 0;
-                for (int i = startIdx; i <= endIdx; i++)
-                {
-                    totalLength += Math.Max(1, cleanWords[i].Text.Length);
-                }
-
-                double elapsedMs = 0;
-                for (int i = startIdx; i <= endIdx; i++)
-                {
-                    double wordLen = Math.Max(1, cleanWords[i].Text.Length);
-                    double wordDurationMs = (wordLen / totalLength) * totalDurationMs;
-
-                    if (wordDurationMs < 100) wordDurationMs = 100;
-
-                    cleanWords[i].Start = totalSpanStart.Add(TimeSpan.FromMilliseconds(elapsedMs));
-                    cleanWords[i].End = cleanWords[i].Start.Add(TimeSpan.FromMilliseconds(wordDurationMs));
-
-                    elapsedMs += wordDurationMs;
-                }
-            }
-
-            idx = endIdx + 1;
-        }
-
-        // Итоговая хронологическая коррекция
-        for (int i = 1; i < cleanWords.Count; i++)
-        {
-            if (cleanWords[i].Start < cleanWords[i - 1].End)
-            {
-                cleanWords[i].Start = cleanWords[i - 1].End;
-                if (cleanWords[i].End <= cleanWords[i].Start)
-                {
-                    cleanWords[i].End = cleanWords[i].Start.Add(TimeSpan.FromMilliseconds(150));
-                }
-            }
-        }
-
-        return cleanWords;
-    }
-
-    public string GenerateKaraokeMarkupFromPhrases(List<List<WordTimeInfo>> phrases, string? fontName = null, string? fillStyle = null, string? primaryColor = null, string? secondaryColor = null, string? videoFormat = null)
-    {
-        if (phrases == null || phrases.Count == 0) return string.Empty;
-
-        var sb = new StringBuilder();
-        BuildAssHeader(sb, fontName, fillStyle, primaryColor, secondaryColor, videoFormat);
-
-        // Deep copy phrases to avoid editing in-memory objects bound to DB context
-        var phrasesCopy = new List<List<WordTimeInfo>>();
-        foreach (var phrase in phrases)
-        {
-            if (phrase == null || phrase.Count == 0) continue;
-            var phraseCopy = phrase.Select(w => w with { }).ToList();
-            phrasesCopy.Add(phraseCopy);
-        }
-
-        if (phrasesCopy.Count == 0) return string.Empty;
-
-        // Apply interpolation on each phrase
-        for (int i = 0; i < phrasesCopy.Count; i++)
-        {
-            phrasesCopy[i] = InterpolateWordTimings(phrasesCopy[i]);
-        }
-
-        ExtendPhraseEnds(phrasesCopy);
-        BuildDialogueLinesFromPhrases(sb, phrasesCopy);
-
-        return sb.ToString();
-    }
-
-    private void BuildDialogueLinesFromPhrases(StringBuilder sb, List<List<WordTimeInfo>> phrases)
+    // Добавляем параметр fillStyle в логику сборки строк диалогов
+    private void BuildDialogueLinesFromPhrases(StringBuilder sb, List<List<WordTimeInfo>> phrases, string? fillStyle)
     {
         TimeSpan absoluteMinStart = TimeSpan.Zero;
 
@@ -529,10 +154,7 @@ public class AssSubtitleGenerator : ISubtitleGenerator
             var lineStart = phraseStart - LeadInTime;
             if (lineStart < TimeSpan.Zero) lineStart = TimeSpan.Zero;
 
-            if (lineStart < absoluteMinStart)
-            {
-                lineStart = absoluteMinStart;
-            }
+            if (lineStart < absoluteMinStart) lineStart = absoluteMinStart;
             if (lineStart > phraseStart) lineStart = phraseStart;
 
             var lineEnd = phraseEnd;
@@ -545,11 +167,16 @@ public class AssSubtitleGenerator : ISubtitleGenerator
 
             var lineBuilder = new StringBuilder($"{{\\fad({FadeTimeMs}, {FadeTimeMs})}}");
 
-            int delayCs = (int)Math.Round((phraseStart - lineStart).TotalMilliseconds / 10.0);
-            if (delayCs > 0)
+            // Инжекция градиента libass, если выбран режим "gradient"
+            if (fillStyle?.ToLower() == "gradient")
             {
-                lineBuilder.Append($"{{\\k{delayCs}}}");
+                // \1vc — вертикальный градиент основного текста, \2vc — градиент закраски караоке
+                // Изменяем тональность сверху вниз (к примеру, подмешивая небольшое затемнение к базовым цветам)
+                lineBuilder.Append(@"{\1vc(FFFFFF,FFFFFF,D0D0D0,D0D0D0)}");
             }
+
+            int delayCs = (int)Math.Round((phraseStart - lineStart).TotalMilliseconds / 10.0);
+            if (delayCs > 0) lineBuilder.Append($"{{\\k{delayCs}}}");
 
             TimeSpan currentTime = phraseStart;
 
@@ -594,5 +221,348 @@ public class AssSubtitleGenerator : ISubtitleGenerator
 
             sb.AppendLine($"Dialogue: 0,{assStart},{assEnd},KaraokeStyle,,0,0,0,,{lineBuilder}");
         }
+    }
+
+    private void BuildDialogueLines(StringBuilder sb, List<List<WordTimeInfo>> phrases, string? fillStyle)
+    {
+        TimeSpan absoluteMinStart = TimeSpan.Zero;
+
+        for (int i = 0; i < phrases.Count; i++)
+        {
+            var phrase = phrases[i];
+
+            var phraseStart = phrase.First().Start - TimeShift;
+            var phraseEnd = phrase.Last().End - TimeShift;
+
+            if (phraseStart < TimeSpan.Zero) phraseStart = TimeSpan.Zero;
+            if (phraseEnd < phraseStart) phraseEnd = phraseStart;
+
+            var lineStart = phraseStart - LeadInTime;
+            if (lineStart < TimeSpan.Zero) lineStart = TimeSpan.Zero;
+
+            if (lineStart < absoluteMinStart) lineStart = absoluteMinStart;
+            if (lineStart > phraseStart) lineStart = phraseStart;
+
+            var lineEnd = phraseEnd;
+            if (lineEnd < lineStart) lineEnd = lineStart + TimeSpan.FromMilliseconds(500);
+
+            absoluteMinStart = lineEnd + TimeSpan.FromMilliseconds(FadeBufferMs);
+
+            string assStart = FormatTimeSpanForAss(lineStart);
+            string assEnd = FormatTimeSpanForAss(lineEnd);
+
+            var lineBuilder = new StringBuilder($"{{\\fad({FadeTimeMs}, {FadeTimeMs})}}");
+
+            if (fillStyle?.ToLower() == "gradient")
+            {
+                lineBuilder.Append(@"{\1vc(FFFFFF,FFFFFF,C8C8C8,C8C8C8)}");
+            }
+
+            int delayCs = (int)Math.Round((phraseStart - lineStart).TotalMilliseconds / 10.0);
+            if (delayCs > 0) lineBuilder.Append($"{{\\k{delayCs}}}");
+
+            TimeSpan currentTime = phraseStart;
+            int splitIdx = GetBestSplitIndex(phrase, 40);
+
+            for (int j = 0; j < phrase.Count; j++)
+            {
+                var word = phrase[j];
+                var shiftedWordStart = word.Start - TimeShift;
+                var shiftedWordEnd = word.End - TimeShift;
+
+                if (shiftedWordStart < TimeSpan.Zero) shiftedWordStart = TimeSpan.Zero;
+                if (shiftedWordEnd < shiftedWordStart) shiftedWordEnd = shiftedWordStart;
+
+                if (shiftedWordStart < currentTime)
+                {
+                    var overlap = currentTime - shiftedWordStart;
+                    shiftedWordStart = currentTime;
+                    shiftedWordEnd += overlap;
+                }
+
+                var pauseDuration = shiftedWordStart - currentTime;
+                if (pauseDuration.TotalMilliseconds > 10)
+                {
+                    int pauseCs = (int)Math.Round(pauseDuration.TotalMilliseconds / 10.0);
+                    if (pauseCs > 0) lineBuilder.Append($"{{\\kf{pauseCs}}}");
+                }
+
+                int wordCs = (int)Math.Round((shiftedWordEnd - shiftedWordStart).TotalMilliseconds / 10.0);
+                if (wordCs <= 0) wordCs = 1;
+
+                if (j == splitIdx) lineBuilder.Append("\\N");
+
+                string trailingSpace = (j != phrase.Count - 1 && j != splitIdx - 1) ? " " : "";
+                AppendCharacterLevelKaraoke(lineBuilder, word.Text, wordCs);
+                lineBuilder.Append(trailingSpace);
+
+                currentTime = shiftedWordEnd;
+            }
+
+            if (currentTime < lineEnd)
+            {
+                int finalWaitCs = (int)Math.Round((lineEnd - currentTime).TotalMilliseconds / 10.0);
+                if (finalWaitCs > 0) lineBuilder.Append($"{{\\kf{finalWaitCs}}}");
+            }
+
+            sb.AppendLine($"Dialogue: 0,{assStart},{assEnd},KaraokeStyle,,0,0,0,,{lineBuilder}");
+        }
+    }
+
+    public List<List<WordTimeInfo>> GroupWordsIntoPhrases(List<WordTimeInfo> words)
+    {
+        var phrases = new List<List<WordTimeInfo>>();
+        if (words == null || words.Count == 0) return phrases;
+
+        var interpolatedWords = InterpolateWordTimings(words);
+        var currentBlock = new List<WordTimeInfo>();
+
+        for (int i = 0; i < interpolatedWords.Count; i++)
+        {
+            var currWord = interpolatedWords[i];
+            string cleanText = PunctuationCleanRegex.Replace(currWord.Text ?? string.Empty, string.Empty).ToLower();
+
+            if (string.IsNullOrWhiteSpace(cleanText)) continue;
+
+            var processedWord = currWord with { Text = cleanText };
+
+            if (currentBlock.Count > 0)
+            {
+                var prevWord = currentBlock.Last();
+                TimeSpan prevEnd = prevWord.End > prevWord.Start ? prevWord.End : prevWord.Start + TimeSpan.FromMilliseconds(200);
+                double gapMs = (processedWord.Start - prevEnd).TotalMilliseconds;
+
+                bool isPauseTooLong = gapMs > 1500;
+                bool canFit = CanFitInTwoLines(currentBlock, processedWord, 40);
+
+                if (isPauseTooLong || !canFit)
+                {
+                    CapitalizeFirstWord(currentBlock);
+                    phrases.Add(currentBlock);
+                    currentBlock = new List<WordTimeInfo>();
+                }
+            }
+
+            currentBlock.Add(processedWord);
+        }
+
+        if (currentBlock.Count > 0)
+        {
+            CapitalizeFirstWord(currentBlock);
+            phrases.Add(currentBlock);
+        }
+
+        return phrases;
+    }
+
+    private bool CanFitInTwoLines(List<WordTimeInfo> blockWords, WordTimeInfo newWord, int maxLineLen)
+    {
+        var tempWords = new List<WordTimeInfo>(blockWords) { newWord };
+        int totalLen = tempWords.Sum(w => w.Text.Length) + tempWords.Count - 1;
+        if (totalLen <= maxLineLen) return true;
+
+        for (int k = 1; k < tempWords.Count; k++)
+        {
+            int line1Len = tempWords.Take(k).Sum(w => w.Text.Length) + k - 1;
+            int line2Len = tempWords.Skip(k).Sum(w => w.Text.Length) + (tempWords.Count - k) - 1;
+
+            if (line1Len <= maxLineLen && line2Len <= maxLineLen) return true;
+        }
+
+        return false;
+    }
+
+    private int GetBestSplitIndex(List<WordTimeInfo> blockWords, int maxLineLen)
+    {
+        int totalLen = blockWords.Sum(w => w.Text.Length) + blockWords.Count - 1;
+        if (totalLen <= maxLineLen) return -1;
+
+        int bestK = -1;
+        int minDiff = int.MaxValue;
+
+        for (int k = 1; k < blockWords.Count; k++)
+        {
+            int line1Len = blockWords.Take(k).Sum(w => w.Text.Length) + k - 1;
+            int line2Len = blockWords.Skip(k).Sum(w => w.Text.Length) + (blockWords.Count - k) - 1;
+
+            if (line1Len <= maxLineLen && line2Len <= maxLineLen)
+            {
+                int diff = Math.Abs(line1Len - line2Len);
+                if (diff < minDiff)
+                {
+                    minDiff = diff;
+                    bestK = k;
+                }
+            }
+        }
+
+        if (bestK == -1) bestK = blockWords.Count / 2;
+        return bestK;
+    }
+
+    private void CapitalizeFirstWord(List<WordTimeInfo> phrase)
+    {
+        if (phrase == null || phrase.Count == 0) return;
+
+        var firstWordInfo = phrase[0];
+        string word = firstWordInfo.Text;
+
+        if (!string.IsNullOrEmpty(word))
+        {
+            string capitalizedWord = char.ToUpper(word[0]) + word[1..];
+            phrase[0] = firstWordInfo with { Text = capitalizedWord };
+        }
+    }
+
+    private double EaseInOutSine(double x) => -(Math.Cos(Math.PI * x) - 1) / 2.0;
+
+    private void AppendCharacterLevelKaraoke(StringBuilder lineBuilder, string wordText, int totalWordCs)
+    {
+        if (string.IsNullOrEmpty(wordText)) return;
+
+        int len = wordText.Length;
+        var charDurations = new int[len];
+        int sumCs = 0;
+
+        for (int i = 0; i < len; i++)
+        {
+            double pStart = (double)i / len;
+            double pEnd = (double)(i + 1) / len;
+
+            double eStart = EaseInOutSine(pStart);
+            double eEnd = EaseInOutSine(pEnd);
+
+            double durationMs = (eEnd - eStart) * (totalWordCs * 10.0);
+            int durationCs = (int)Math.Round(durationMs / 10.0);
+
+            if (durationCs <= 0) durationCs = 1;
+
+            charDurations[i] = durationCs;
+            sumCs += durationCs;
+        }
+
+        int diff = totalWordCs - sumCs;
+        if (diff != 0)
+        {
+            int bestIdx = 0;
+            int maxVal = charDurations[0];
+            for (int i = 1; i < len; i++)
+            {
+                if (charDurations[i] > maxVal)
+                {
+                    maxVal = charDurations[i];
+                    bestIdx = i;
+                }
+            }
+            charDurations[bestIdx] = Math.Max(1, charDurations[bestIdx] + diff);
+        }
+
+        for (int i = 0; i < len; i++)
+        {
+            lineBuilder.Append($"{{\\kf{charDurations[i]}}}{wordText[i]}");
+        }
+    }
+
+    private void ExtendPhraseEnds(List<List<WordTimeInfo>> phrases)
+    {
+        for (int i = 0; i < phrases.Count; i++)
+        {
+            var currentPhraseWords = phrases[i];
+            var lastWord = currentPhraseWords.Last();
+
+            TimeSpan maxAllowedEnd = (i < phrases.Count - 1)
+                ? phrases[i + 1].First().Start - TimeSpan.FromMilliseconds(FadeBufferMs)
+                : lastWord.End + TimeSpan.FromMilliseconds(1200);
+
+            TimeSpan desiredEnd = lastWord.End + TimeSpan.FromMilliseconds(450);
+            if (desiredEnd > maxAllowedEnd) desiredEnd = maxAllowedEnd;
+
+            if (desiredEnd > lastWord.Start) lastWord.End = desiredEnd;
+        }
+    }
+
+    private string FormatTimeSpanForAss(TimeSpan ts)
+    {
+        long totalCentiseconds = (long)Math.Round(ts.TotalMilliseconds / 10.0);
+        long cs = totalCentiseconds % 100;
+        long totalSeconds = totalCentiseconds / 100;
+        long secs = totalSeconds % 60;
+        long totalMinutes = totalSeconds / 60;
+        long mins = totalMinutes % 60;
+        long hours = totalMinutes / 60;
+
+        return $"{hours:D1}:{mins:D2}:{secs:D2}.{cs:D2}";
+    }
+
+    private List<WordTimeInfo> InterpolateWordTimings(List<WordTimeInfo> words)
+    {
+        if (words == null || words.Count == 0) return new List<WordTimeInfo>();
+
+        var cleanWords = words.Select(w => w with { }).ToList();
+
+        for (int i = 0; i < cleanWords.Count; i++)
+        {
+            if (cleanWords[i].End <= cleanWords[i].Start)
+            {
+                cleanWords[i].End = cleanWords[i].Start.Add(TimeSpan.FromMilliseconds(150));
+            }
+        }
+
+        int idx = 0;
+        while (idx < cleanWords.Count)
+        {
+            int startIdx = idx;
+            TimeSpan maxTime = cleanWords[idx].End;
+            int endIdx = idx;
+
+            while (endIdx + 1 < cleanWords.Count && cleanWords[endIdx + 1].Start < maxTime)
+            {
+                endIdx++;
+                if (cleanWords[endIdx].End > maxTime) maxTime = cleanWords[endIdx].End;
+            }
+
+            if (endIdx > startIdx)
+            {
+                TimeSpan totalSpanStart = cleanWords[startIdx].Start;
+                TimeSpan totalSpanEnd = maxTime;
+                double totalDurationMs = (totalSpanEnd - totalSpanStart).TotalMilliseconds;
+
+                double totalLength = 0;
+                for (int i = startIdx; i <= endIdx; i++)
+                {
+                    totalLength += Math.Max(1, cleanWords[i].Text.Length);
+                }
+
+                double elapsedMs = 0;
+                for (int i = startIdx; i <= endIdx; i++)
+                {
+                    double wordLen = Math.Max(1, cleanWords[i].Text.Length);
+                    double wordDurationMs = (wordLen / totalLength) * totalDurationMs;
+
+                    if (wordDurationMs < 100) wordDurationMs = 100;
+
+                    cleanWords[i].Start = totalSpanStart.Add(TimeSpan.FromMilliseconds(elapsedMs));
+                    cleanWords[i].End = cleanWords[i].Start.Add(TimeSpan.FromMilliseconds(wordDurationMs));
+
+                    elapsedMs += wordDurationMs;
+                }
+            }
+
+            idx = endIdx + 1;
+        }
+
+        for (int i = 1; i < cleanWords.Count; i++)
+        {
+            if (cleanWords[i].Start < cleanWords[i - 1].End)
+            {
+                cleanWords[i].Start = cleanWords[i - 1].End;
+                if (cleanWords[i].End <= cleanWords[i].Start)
+                {
+                    cleanWords[i].End = cleanWords[i].Start.Add(TimeSpan.FromMilliseconds(150));
+                }
+            }
+        }
+
+        return cleanWords;
     }
 }

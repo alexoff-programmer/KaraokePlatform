@@ -53,10 +53,10 @@ public class DashboardModel : PageModel
     public string FillStyle { get; set; } = "gradient";
 
     [BindProperty]
-    public string PrimaryColor { get; set; } = "white";
+    public string PrimaryColor { get; set; } = "#ffffff";
 
     [BindProperty]
-    public string SecondaryColor { get; set; } = "purple";
+    public string SecondaryColor { get; set; } = "#a855f7";
 
     [BindProperty]
     public string VideoFormat { get; set; } = "portrait";
@@ -418,6 +418,9 @@ public class DashboardModel : PageModel
             .Select(t => new { t.Id, t.OriginalFileName, t.Status, t.Progress })
             .ToListAsync();
 
-        return new JsonResult(new { users, tasks });
+        var cpuUsage = Math.Round(SystemMonitor.GetCpuUsage(), 1);
+        var gpuUsage = Math.Round(SystemMonitor.GetGpuUsage(), 1);
+
+        return new JsonResult(new { users, tasks, cpuUsage, gpuUsage });
     }
 }

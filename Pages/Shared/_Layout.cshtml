@@ -9,7 +9,7 @@
     <!-- Outfit & Inter Fonts + Bootstrap Icons CDNs -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Comfortaa:wght@400;700&family=Inter:wght@300;400;600;800&family=Lobster&family=Montserrat:wght@400;700;800&family=Outfit:wght@400;600;800&family=Oswald:wght@400;700&family=Pacifico&family=Rubik:wght@400;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
@@ -252,14 +252,11 @@
                     });
                 }
 
-                function updateNeonGraphs() {
+                function updateNeonGraphs(cpuVal, gpuVal) {
                     const cpuText = document.getElementById('cpuLoadText');
                     const gpuText = document.getElementById('gpuLoadText');
                     
                     if (cpuText && gpuText) {
-                        const cpuVal = Math.floor(Math.random() * 25) + 10;
-                        const gpuVal = Math.floor(Math.random() * 35) + 20;
-
                         cpuText.innerText = cpuVal + '%';
                         gpuText.innerText = gpuVal + '%';
 
@@ -292,14 +289,15 @@
                     path.setAttribute('d', newD);
                 }
 
-                setInterval(updateNeonGraphs, 2000);
-
                 async function fetchAdminData() {
                     try {
                         const response = await fetch('/Dashboard?handler=AdminData');
                         if (response.ok) {
                             const data = await response.json();
                             renderAdminSidebar(data);
+                            if (typeof data.cpuUsage !== 'undefined' && typeof data.gpuUsage !== 'undefined') {
+                                updateNeonGraphs(data.cpuUsage, data.gpuUsage);
+                            }
                         }
                     } catch (e) {
                         console.error('Error fetching admin data:', e);

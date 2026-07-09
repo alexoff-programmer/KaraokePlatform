@@ -113,41 +113,39 @@
                                                 <div class="mb-3">
                                                     <label class="form-label text-white-50 small">Шрифт караоке</label>
                                                     <select asp-for="SubtitleFont" id="configFont" class="form-select">
-                                                        <option value="Inter">Inter (Строгий)</option>
-                                                        <option value="Outfit">Outfit (Премиум)</option>
-                                                        <option value="Courier New">Neon Display (Моноширинный)</option>
+                                                        <option value="Inter">Inter (Строгий, кириллица)</option>
+                                                        <option value="Montserrat">Montserrat (Геометрический, кириллица)</option>
+                                                        <option value="Oswald">Oswald (Узкий / Жирный, кириллица)</option>
+                                                        <option value="Rubik">Rubik (Дружелюбный округлый, кириллица)</option>
+                                                        <option value="Comfortaa">Comfortaa (Стильный округлый, кириллица)</option>
+                                                        <option value="Lobster">Lobster (Винтажный курсив, кириллица)</option>
+                                                        <option value="Pacifico">Pacifico (Прикольный рукописный, кириллица)</option>
+                                                        <option value="Outfit">Outfit (Премиум, только латиница)</option>
                                                     </select>
                                                 </div>
 
-                                                <div class="mb-3">
-                                                    <label class="form-label text-white-50 small">Анимация закрашивания</label>
-                                                    <select asp-for="FillStyle" id="configFillStyle" class="form-select">
-                                                        <option value="gradient">Плавный градиент</option>
-                                                        <option value="classic">Классическая заливка</option>
-                                                    </select>
-                                                </div>
-
-                                                <div class="mb-3">
-                                                    <label class="form-label text-white-50 small">Основной цвет текста</label>
-                                                    <select asp-for="PrimaryColor" id="configPrimaryColor" class="form-select">
-                                                        <option value="white">⚪ Белый</option>
-                                                        <option value="lightgray">🩶 Светло-серый</option>
-                                                        <option value="cyan">🩵 Морской</option>
-                                                        <option value="yellow">💛 Желтый</option>
-                                                    </select>
-                                                </div>
-
-                                                <div class="mb-3">
-                                                    <label class="form-label text-white-50 small">Цвет закрашивания
-                                                        (активный)</label>
-                                                        <select asp-for="SecondaryColor" id="configSecondaryColor" class="form-select">
-                                                            <option value="purple">💜 Фиолетовый</option>
-                                                            <option value="red">❤️ Красный</option>
-                                                            <option value="yellow">💛 Желтый</option>
-                                                            <option value="green">💚 Зеленый</option>
-                                                            <option value="cyan">🩵 Морской</option>
-                                                        </select>
+                                                <div class="row g-3 mb-3">
+                                                    <div class="col-6">
+                                                        <label class="form-label text-white-50 small d-block">Цвет текста</label>
+                                                        <div class="d-flex align-items-center gap-2">
+                                                            <div class="color-picker-wrapper">
+                                                                <input type="color" asp-for="PrimaryColor" id="configPrimaryColor" class="color-picker-input" />
+                                                                <div class="color-picker-wheel" id="configPrimaryColorWheel"></div>
+                                                            </div>
+                                                            <span class="text-white-50 small fw-mono" id="primaryColorHex">#FFFFFF</span>
+                                                        </div>
                                                     </div>
+                                                    <div class="col-6">
+                                                        <label class="form-label text-white-50 small d-block">Цвет закраски</label>
+                                                        <div class="d-flex align-items-center gap-2">
+                                                            <div class="color-picker-wrapper">
+                                                                <input type="color" asp-for="SecondaryColor" id="configSecondaryColor" class="color-picker-input" />
+                                                                <div class="color-picker-wheel" id="configSecondaryColorWheel"></div>
+                                                            </div>
+                                                            <span class="text-white-50 small fw-mono" id="secondaryColorHex">#A855F7</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
 
                                                     <div class="mb-3">
                                                         <label class="form-label text-white-50 small">Формат видео</label>
@@ -202,7 +200,7 @@
                                                          class="player-preview-bg preset-card-cyberpunk" />
                                                     <div class="player-preview-overlay">
                                                         <div class="preview-subtitle-line" id="previewSubLine1">
-                                                            <span class="preview-first-word">Я люблю</span> этот красивый караоке плеер
+                                                            <span class="preview-first-word" style="font-weight: 800;">Я люблю эт</span>от красивый караоке плеер
                                                         </div>
                                                     </div>
                                                 </div>
@@ -679,65 +677,73 @@
 
                                                                                                 // Live visual subtitle settings updates
                                                                                                 const fontSelect = document.getElementById('configFont');
-                                                                                                const fillSelect = document.getElementById('configFillStyle');
                                                                                                 const priColorSelect = document.getElementById('configPrimaryColor');
                                                                                                 const secColorSelect = document.getElementById('configSecondaryColor');
                                                                                                 const formatSelect = document.getElementById('configVideoFormat');
                                                                                                 const previewContainer = document.querySelector('.player-preview-container');
-
+                                                                                                
                                                                                                 function applyFontAndStylePreview(font, fill, priCol, secCol) {
                                                                                                     const line1 = document.getElementById('previewSubLine1');
-
+                                                                                                
                                                                                                     if (line1) {
                                                                                                         line1.style.fontFamily = font;
-
-                                                                                                        const cssPri = {
+                                                                                                
+                                                                                                        const cssPri = priCol.startsWith('#') ? priCol : ({
                                                                                                             white: '#ffffff',
                                                                                                             lightgray: '#d3d3d3',
                                                                                                             cyan: '#00ffff',
                                                                                                             yellow: '#ffff00'
-                                                                                                        }[priCol] || '#ffffff';
-
-                                                                                                        const cssSec = {
+                                                                                                        }[priCol] || '#ffffff');
+                                                                                                
+                                                                                                        const cssSec = secCol.startsWith('#') ? secCol : ({
                                                                                                             purple: '#a855f7',
                                                                                                             red: '#ef4444',
                                                                                                             yellow: '#eab308',
                                                                                                             green: '#22c55e',
                                                                                                             cyan: '#06b6d4'
-                                                                                                        }[secCol] || '#a855f7';
-
+                                                                                                        }[secCol] || '#a855f7');
+                                                                                                
                                                                                                         line1.style.color = cssPri;
-
-                                                                                                        if (fill === 'gradient') {
-                                                                                                            line1.style.textShadow = `0 2px 4px rgba(0,0,0,0.8), 0 0 20px ${cssSec}80`;
-                                                                                                            line1.innerHTML = `<span class="karaoke-sweep-demo" style="--sweep-col:${cssSec}; font-weight: 800;">Я</span> люблю этот красивый караоке плеер`;
-                                                                                                        } else {
-                                                                                                            line1.style.textShadow = '0 2px 4px rgba(0,0,0,0.9)';
-                                                                                                            line1.innerHTML = `<span style="color: ${cssSec}; font-weight: 800;">Я</span> люблю этот красивый караоке плеер`;
-                                                                                                        }
+                                                                                                
+                                                                                                        // Анимация закрашивания теперь всегда "gradient" (плавный градиент)
+                                                                                                        line1.style.textShadow = `0 2px 4px rgba(0,0,0,0.8), 0 0 20px ${cssSec}80`;
+                                                                                                        line1.innerHTML = `<span style="color:${cssSec}; font-weight: 800;">Я люблю эт</span>от красивый караоке плеер`;
                                                                                                     }
                                                                                                 }
-
+                                                                                                
+                                                                                                function updateColorPickerUI() {
+                                                                                                    const priVal = priColorSelect.value;
+                                                                                                    const secVal = secColorSelect.value;
+                                                                                                    
+                                                                                                    const priWheel = document.getElementById('configPrimaryColorWheel');
+                                                                                                    const secWheel = document.getElementById('configSecondaryColorWheel');
+                                                                                                    const priHex = document.getElementById('primaryColorHex');
+                                                                                                    const secHex = document.getElementById('secondaryColorHex');
+                                                                                                    
+                                                                                                    if (priWheel) priWheel.style.backgroundColor = priVal;
+                                                                                                    if (priHex) priHex.textContent = priVal.toUpperCase();
+                                                                                                    
+                                                                                                    if (secWheel) secWheel.style.backgroundColor = secVal;
+                                                                                                    if (secHex) secHex.textContent = secVal.toUpperCase();
+                                                                                                }
+                                                                                                
                                                                                                 fontSelect.addEventListener('change', () => {
                                                                                                     localStorage.setItem('SubtitleFont', fontSelect.value);
-                                                                                                    applyFontAndStylePreview(fontSelect.value, fillSelect.value, priColorSelect.value, secColorSelect.value);
+                                                                                                    applyFontAndStylePreview(fontSelect.value, 'gradient', priColorSelect.value, secColorSelect.value);
                                                                                                 });
-
-                                                                                                fillSelect.addEventListener('change', () => {
-                                                                                                    localStorage.setItem('AnimationFillStyle', fillSelect.value);
-                                                                                                    applyFontAndStylePreview(fontSelect.value, fillSelect.value, priColorSelect.value, secColorSelect.value);
-                                                                                                });
-
-                                                                                                priColorSelect.addEventListener('change', () => {
+                                                                                                
+                                                                                                priColorSelect.addEventListener('input', () => {
+                                                                                                    updateColorPickerUI();
                                                                                                     localStorage.setItem('PrimaryColor', priColorSelect.value);
-                                                                                                    applyFontAndStylePreview(fontSelect.value, fillSelect.value, priColorSelect.value, secColorSelect.value);
+                                                                                                    applyFontAndStylePreview(fontSelect.value, 'gradient', priColorSelect.value, secColorSelect.value);
                                                                                                 });
-
-                                                                                                secColorSelect.addEventListener('change', () => {
+                                                                                                
+                                                                                                secColorSelect.addEventListener('input', () => {
+                                                                                                    updateColorPickerUI();
                                                                                                     localStorage.setItem('SecondaryColor', secColorSelect.value);
-                                                                                                    applyFontAndStylePreview(fontSelect.value, fillSelect.value, priColorSelect.value, secColorSelect.value);
+                                                                                                    applyFontAndStylePreview(fontSelect.value, 'gradient', priColorSelect.value, secColorSelect.value);
                                                                                                 });
-
+                                                                                                
                                                                                                 function applyVideoFormatPreview(fmt) {
                                                                                                     if (!previewContainer) return;
                                                                                                     if (fmt === 'landscape') {
@@ -750,23 +756,23 @@
                                                                                                         previewContainer.style.maxWidth = '240px';
                                                                                                     }
                                                                                                 }
-
+                                                                                                
                                                                                                 if (formatSelect) {
                                                                                                     formatSelect.addEventListener('change', () => {
                                                                                                         localStorage.setItem('VideoFormat', formatSelect.value);
                                                                                                         applyVideoFormatPreview(formatSelect.value);
                                                                                                     });
                                                                                                 }
-
+                                                                                                
                                                                                                 // Config persistence loaders
                                                                                                 const langSelect = document.getElementById('configLanguage');
                                                                                                 const qualSelect = document.getElementById('configQuality');
                                                                                                 const vocalSwitch = document.getElementById('removeVocalSwitch');
-
+                                                                                                
                                                                                                 langSelect.addEventListener('change', () => localStorage.setItem('SelectedLanguage', langSelect.value));
                                                                                                 qualSelect.addEventListener('change', () => localStorage.setItem('SelectedQuality', qualSelect.value));
                                                                                                 vocalSwitch.addEventListener('change', () => localStorage.setItem('RemoveVocal', vocalSwitch.checked));
-
+                                                                                                
                                                                                                 function loadLocalConfig() {
                                                                                                     const config = {
                                                                                                         apiKey: localStorage.getItem('geminiApiKey') || '',
@@ -774,34 +780,33 @@
                                                                                                         lang: localStorage.getItem('SelectedLanguage') || 'auto',
                                                                                                         quality: localStorage.getItem('SelectedQuality') || 'medium',
                                                                                                         font: localStorage.getItem('SubtitleFont') || 'Outfit',
-                                                                                                        fill: localStorage.getItem('AnimationFillStyle') || 'gradient',
-                                                                                                        priColor: localStorage.getItem('PrimaryColor') || 'white',
-                                                                                                        secColor: localStorage.getItem('SecondaryColor') || 'purple',
+                                                                                                        priColor: localStorage.getItem('PrimaryColor') || '#ffffff',
+                                                                                                        secColor: localStorage.getItem('SecondaryColor') || '#a855f7',
                                                                                                         videoFormat: localStorage.getItem('VideoFormat') || 'portrait',
                                                                                                         removeVocal: localStorage.getItem('RemoveVocal') !== 'false',
                                                                                                         preset: localStorage.getItem('SelectedPresetBg') || 'preset_cyberpunk.png'
                                                                                                     };
-
+                                                                                                
                                                                                                     document.getElementById('dashboardGeminiApiKey').value = config.apiKey;
                                                                                                     document.getElementById('dashboardAutoImproveEnabled').value = config.autoImprove;
-
+                                                                                                
                                                                                                     const modalKey = document.getElementById('geminiApiKeyModalInput');
                                                                                                     const modalSwitch = document.getElementById('geminiAutoImproveModalInput');
                                                                                                     if (modalKey) modalKey.value = config.apiKey;
                                                                                                     if (modalSwitch) modalSwitch.checked = config.autoImprove;
-
+                                                                                                
                                                                                                     langSelect.value = config.lang;
                                                                                                     qualSelect.value = config.quality;
                                                                                                     fontSelect.value = config.font;
-                                                                                                    fillSelect.value = config.fill;
                                                                                                     priColorSelect.value = config.priColor;
                                                                                                     secColorSelect.value = config.secColor;
                                                                                                     vocalSwitch.checked = config.removeVocal;
                                                                                                     if (formatSelect) formatSelect.value = config.videoFormat;
-
+                                                                                                
                                                                                                     applyBackgroundPreset(config.preset);
                                                                                                     updateGeminiStatusLabel(config.apiKey, config.autoImprove);
-                                                                                                    applyFontAndStylePreview(config.font, config.fill, config.priColor, config.secColor);
+                                                                                                    updateColorPickerUI();
+                                                                                                    applyFontAndStylePreview(config.font, 'gradient', config.priColor, config.secColor);
                                                                                                     applyVideoFormatPreview(config.videoFormat);
                                                                                                 }
 

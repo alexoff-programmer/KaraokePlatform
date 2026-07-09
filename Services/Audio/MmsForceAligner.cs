@@ -71,7 +71,12 @@ public class MmsForceAligner
             if (_session == null)
             {
                 var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
+
+                // Фикс: Ограничиваем внутренний пул потоков ONNX, чтобы не было Thread Contention
+                options.IntraOpNumThreads = 1;
+                options.InterOpNumThreads = 1;
                 options.AppendExecutionProvider_CPU();
+
                 _session = new InferenceSession(_modelPath, options);
                 _logger.LogInformation("Сессия ONNX Runtime для Force Aligner инициализирована.");
             }
@@ -88,12 +93,12 @@ public class MmsForceAligner
         var vocabDict = LoadVocabulary(language);
         int blankId = vocabDict.TryGetValue('<', out int bId) ? bId : 0;  // CTC blank token
 
-        // ── УЛУЧШЕНИЕ 2: Предобработка аудио ──────────────────────────
+        // Предобработка аудио
         var processedSamples = ApplyPreEmphasisAndRmsNorm(samples);
 
-        // ── Подготовка токенов ────────────────────────────────────────
+        // Подготовка токенов (локальные переменные)
         var cleanText = text.ToLower().Replace("ё", "е");
-        var tokens = new List<char>();
+        var localTokens = new List<char>();
         var charToWordIndex = new List<int>();
         var words = new List<string>();
 
@@ -106,28 +111,27 @@ public class MmsForceAligner
                 words.Add(wordClean);
                 foreach (var c in wordClean)
                 {
-                    tokens.Add(c);
+                    localTokens.Add(c);
                     charToWordIndex.Add(words.Count - 1);
                 }
                 if (wIdx < wordParts.Length - 1)
                 {
-                    tokens.Add('|');
+                    localTokens.Add('|');
                     charToWordIndex.Add(-1);
                 }
             }
         }
 
-        if (tokens.Count == 0) return new List<WordTimeInfo>();
+        if (localTokens.Count == 0) return new List<WordTimeInfo>();
 
-        int[] tokenIds = tokens.Select(c => vocabDict.TryGetValue(c, out int id) ? id : 3).ToArray();
+        int[] tokenIds = localTokens.Select(c => vocabDict.TryGetValue(c, out int id) ? id : 3).ToArray();
         int N = tokenIds.Length;
-        this.tokens = tokens;
 
-        // ── ONNX-инференс ─────────────────────────────────────────────
+        // ONNX-инференс
         float[,] logProbs = RunInference(processedSamples);
         int T = logProbs.GetLength(0);
 
-        // ── Внедрить VAD-маску на уровне логитов ─────────────────────
+        // Внедрить VAD-маску на уровне логитов
         int samplesPerFrame = 320;
         int numFrames = T;
         int vocabSize = logProbs.GetLength(1);
@@ -151,7 +155,6 @@ public class MmsForceAligner
             double rms = Math.Sqrt(sumSq / (frameEnd - frameStart));
             double rmsDb = 20 * Math.Log10(rms + 1e-10);
 
-            // Quiet threshold is -25dB on raw un-normalized samples
             isSilent[t] = rmsDb < -25.0;
         }
 
@@ -183,19 +186,19 @@ public class MmsForceAligner
             }
         }
 
-        // ── УЛУЧШЕНИЕ 3: Двунаправленное выравнивание ─────────────────
+        // Двунаправленное выравнивание с передачей локального контекста токенов
         _logger.LogDebug("[Aligner] Запуск прямого прохода Beam Search (T={T}, N={N})...", T, N);
-        var (fwdPath, fwdScore) = BeamSearchAlign(logProbs, tokenIds, blankId, isSilent, forward: true);
+        var (fwdPath, fwdScore) = BeamSearchAlign(logProbs, tokenIds, blankId, isSilent, localTokens, vocabDict);
 
         _logger.LogDebug("[Aligner] Запуск обратного прохода Beam Search...");
         bool[] isSilentRev = isSilent.Reverse().ToArray();
-        var (bwdPathRev, _) = BeamSearchAlign(ReverseLogProbs(logProbs), ReverseTokens(tokenIds), blankId, isSilentRev, forward: false);
+        var (bwdPathRev, _) = BeamSearchAlign(ReverseLogProbs(logProbs), ReverseTokens(tokenIds), blankId, isSilentRev, localTokens, vocabDict);
         var bwdPath = ReversePath(bwdPathRev, N);
 
-        // Сшиваем два пути: прямой лучше находит начала слов, обратный — концы
+        // Сшиваем два пути
         var mergedPath = MergePaths(fwdPath, bwdPath, N, T);
 
-        // ── Определяем границы символов ──────────────────────────────
+        // Определяем границы символов
         var (charStartFrames, charEndFrames) = ExtractCharFrames(mergedPath, N, T);
 
         int firstValidFrame = 0;
@@ -218,20 +221,16 @@ public class MmsForceAligner
             }
         }
 
-        // ── Группировка символов в слова ──────────────────────────────
+        // Группировка символов в слова
         return BuildWordTimings(words, charStartFrames, charEndFrames, firstValidFrame, lastValidFrame);
     }
 
-    // ─────────────────────────────────────────────────────────────────
-    //  УЛУЧШЕНИЕ 1: CTC-Beam Search с языковым буcтингом
-    // ─────────────────────────────────────────────────────────────────
     private (int[] path, float score) BeamSearchAlign(
-        float[,] logProbs, int[] tokenIds, int blankId, bool[] isSilent, bool forward)
+        float[,] logProbs, int[] tokenIds, int blankId, bool[] isSilent, List<char> localTokens, Dictionary<char, int> vocabDict)
     {
         int T = logProbs.GetLength(0);
         int N = tokenIds.Length;
 
-        // Precalculate active (non-silent) frames up to t
         int[] activeFramesUpTo = new int[T];
         int totalActiveFrames = 0;
         for (int t = 0; t < T; t++)
@@ -243,8 +242,6 @@ public class MmsForceAligner
             activeFramesUpTo[t] = totalActiveFrames;
         }
 
-        // Состояние луча: (state_index, score, backpointers)
-        // state_index — текущая позиция в tokenIds (сколько токенов уже «обработано»)
         var beams = new List<(int state, float score, int[] path)>();
         var initialPath = Enumerable.Repeat(-1, T).ToArray();
         beams.Add((0, logProbs[0, tokenIds[0]], initialPath));
@@ -253,14 +250,12 @@ public class MmsForceAligner
         {
             var newBeams = new Dictionary<int, (float score, int[] path)>();
 
-            // Sakoe-Chiba corridor check
             int activeFrames = activeFramesUpTo[t];
             double progress = totalActiveFrames > 0 ? (double)activeFrames / totalActiveFrames : (double)t / T;
             int idealCharIdx = (int)(progress * N);
 
             foreach (var (state, prevScore, prevPath) in beams)
             {
-                // Dynamic corridor width of 10 characters to prevent premature leaps
                 if (state < idealCharIdx - 10 || state > idealCharIdx + 10)
                 {
                     continue;
@@ -275,8 +270,6 @@ public class MmsForceAligner
                 {
                     int nextToken = tokenIds[state + 1];
 
-                    // CTC Collapse Rule: if next character is identical to the current one,
-                    // we must have a blank token in between (prevPath[t-1] must be -1).
                     bool isDuplicate = tokenIds[state] == nextToken;
                     bool prevWasBlank = prevPath[t - 1] == -1;
 
@@ -284,18 +277,15 @@ public class MmsForceAligner
                     {
                         float advanceBoost = GetBoostedLogProb(logProbs, t, nextToken, state + 1, tokenIds);
 
-                        // ── УЛУЧШЕНИЕ 4: Штраф за пропуск разделителя '|' ──
-                        // Если перед переходом ожидается blank, но мы его не видим — штрафуем
                         float penalty = 0f;
-                        if (tokens.Count > 0 && state < N - 1)
+                        if (localTokens.Count > 0 && state < N - 1)
                         {
-                            // Если следующий токен — разделитель '|', требуем blank между словами
-                            int pipeId = vocabDictInstance != null && vocabDictInstance.TryGetValue('|', out int pId) ? pId : -1;
+                            int pipeId = vocabDict.TryGetValue('|', out int pId) ? pId : -1;
                             bool isWordBoundary = nextToken == pipeId;
                             if (isWordBoundary)
                             {
                                 float blankProb = logProbs[t, blankId];
-                                if (blankProb < -3.0f) // Нет явного blank — штраф
+                                if (blankProb < -3.0f)
                                     penalty = -BlankPenalty;
                             }
                         }
@@ -313,7 +303,6 @@ public class MmsForceAligner
                 }
             }
 
-            // Обрезаем до BeamWidth лучших лучей по score
             if (newBeams.Count > 0)
             {
                 beams = newBeams
@@ -322,7 +311,6 @@ public class MmsForceAligner
                     .Select(kvp => (kvp.Key, kvp.Value.score, kvp.Value.path))
                     .ToList();
             }
-            // else: keep previous beams if corridor pruned everything (safety fallback)
         }
 
         if (beams.Count == 0)
@@ -345,32 +333,20 @@ public class MmsForceAligner
         }
     }
 
-    /// <summary>
-    /// Применяет усиление вероятности (boosting) для символов, которые принадлежат целевому слову.
-    /// Это заставляет Beam Search «жестко следовать» тексту Whisper, игнорируя грязь в звуке.
-    /// </summary>
     private float GetBoostedLogProb(float[,] logProbs, int t, int tokenId, int stateIdx, int[] tokenIds)
     {
         float baseProb = logProbs[t, tokenId];
-
-        // Если текущий символ является частью ожидаемого слова — усиливаем вероятность
         if (stateIdx < tokenIds.Length && tokenId == tokenIds[stateIdx])
         {
-            // Логарифмическое усиление: log(p * alpha) = log(p) + log(alpha)
             baseProb += (float)Math.Log(BoostAlpha);
         }
-
         return baseProb;
     }
 
-    // ─────────────────────────────────────────────────────────────────
-    //  УЛУЧШЕНИЕ 2: Предобработка аудио (Pre-emphasis + RMS Norm)
-    // ─────────────────────────────────────────────────────────────────
     private float[] ApplyPreEmphasisAndRmsNorm(float[] samples)
     {
         if (samples.Length == 0) return samples;
 
-        // Шаг А: Посегментная RMS-нормализация (скользящее окно ~2 секунды)
         var normalized = new float[samples.Length];
         float targetLinear = (float)Math.Pow(10.0, TargetRmsDb / 20.0);
 
@@ -379,20 +355,16 @@ public class MmsForceAligner
             int end = Math.Min(start + RmsWindowSamples, samples.Length);
             int len = end - start;
 
-            // Считаем RMS окна
             double sumSq = 0;
             for (int i = start; i < end; i++) sumSq += samples[i] * samples[i];
             float rms = (float)Math.Sqrt(sumSq / len);
 
-            // Вычисляем коэффициент усиления, ограничиваем чтобы не клиппить
             float gain = (rms > 1e-6f) ? Math.Clamp(targetLinear / rms, 0.1f, 10.0f) : 1.0f;
 
             for (int i = start; i < end; i++)
                 normalized[i] = Math.Clamp(samples[i] * gain, -1.0f, 1.0f);
         }
 
-        // Шаг Б: Формантный фильтр (Pre-emphasis) y[n] = x[n] - α * x[n-1]
-        // Усиливает согласные (с, ц, т, к, ш) — критически важно для рэпа
         var preemphasized = new float[normalized.Length];
         preemphasized[0] = normalized[0];
         for (int i = 1; i < normalized.Length; i++)
@@ -402,10 +374,6 @@ public class MmsForceAligner
 
         return preemphasized;
     }
-
-    // ─────────────────────────────────────────────────────────────────
-    //  УЛУЧШЕНИЕ 3: Вспомогательные методы двунаправленного выравнивания
-    // ─────────────────────────────────────────────────────────────────
 
     private float[,] ReverseLogProbs(float[,] logProbs)
     {
@@ -437,18 +405,12 @@ public class MmsForceAligner
             }
             else
             {
-                // Инвертируем индексы состояний (пересчёт из обратного прохода)
                 reversed[T - 1 - t] = Math.Max(0, (N - 1) - path[t]);
             }
         }
         return reversed;
     }
 
-    /// <summary>
-    /// Сшивает прямой и обратный пути:
-    /// - Для начала каждого символа берём прямой путь (он лучше находит START)
-    /// - Для конца каждого символа берём обратный путь (он лучше находит END)
-    /// </summary>
     private int[] MergePaths(int[] fwdPath, int[] bwdPath, int N, int T)
     {
         var merged = new int[T];
@@ -458,29 +420,17 @@ public class MmsForceAligner
             int fwd = fwdPath[t];
             int bwd = bwdPath[t];
 
-            if (fwd == -1 && bwd == -1)
-            {
-                merged[t] = -1;
-            }
-            else if (fwd == -1)
-            {
-                merged[t] = bwd;
-            }
-            else if (bwd == -1)
-            {
-                merged[t] = fwd;
-            }
+            if (fwd == -1 && bwd == -1) merged[t] = -1;
+            else if (fwd == -1) merged[t] = bwd;
+            else if (bwd == -1) merged[t] = fwd;
             else
             {
-                // Для первой половины трека доверяем прямому пути больше,
-                // для второй половины — обратному (двунаправленное «сшивание»)
                 float weight = (float)t / T;
                 merged[t] = (int)Math.Round(fwd * (1.0f - weight) + bwd * weight);
                 merged[t] = Math.Clamp(merged[t], 0, N - 1);
             }
         }
 
-        // Обеспечиваем монотонность (путь может только идти вперёд, пропуская blank -1)
         int lastState = 0;
         for (int t = 0; t < T; t++)
         {
@@ -495,14 +445,10 @@ public class MmsForceAligner
         return merged;
     }
 
-    // ─────────────────────────────────────────────────────────────────
-    //  ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
-    // ─────────────────────────────────────────────────────────────────
-
     private float[,] RunInference(float[] samples)
     {
         float[,] logits;
-        lock (_lock)
+        lock (_lock) // Фикс: Потокобезопасная защита инференса ONNX-сессии
         {
             string inputName = _session!.InputMetadata.Keys.First();
             string outputName = _session.OutputMetadata.Keys.First();
@@ -516,7 +462,6 @@ public class MmsForceAligner
             int frameCount = outputTensor.Dimensions[1];
             int vocabSize = outputTensor.Dimensions[2];
 
-            // Сразу вычисляем Log-Softmax
             logits = new float[frameCount, vocabSize];
             for (int t = 0; t < frameCount; t++)
             {
@@ -549,7 +494,6 @@ public class MmsForceAligner
             charEndFrames[s] = t;
         }
 
-        // Find the first frame where path was not silent/blank (-1)
         int firstValidFrame = 0;
         for (int t = 0; t < T; t++)
         {
@@ -560,7 +504,6 @@ public class MmsForceAligner
             }
         }
 
-        // Интерполяция для символов без фреймов
         int lastValidFrame = firstValidFrame;
         for (int i = 0; i < N; i++)
         {
@@ -613,15 +556,11 @@ public class MmsForceAligner
 
             result.Add(new WordTimeInfo { Text = words[wIdx], Start = start, End = end });
 
-            firstCharIdx += wordLen + 1; // +1 пропускаем разделитель '|'
+            firstCharIdx += wordLen + 1;
         }
 
         return result;
     }
-
-    // Workaround: экземпляр vocabDict для доступа в GetBoostedLogProb
-    // (поскольку это private static-like, мы кэшируем при первом вызове AlignAudioAsync)
-    private Dictionary<char, int>? vocabDictInstance;
 
     private Dictionary<char, int> LoadVocabulary(string language)
     {
@@ -642,7 +581,6 @@ public class MmsForceAligner
                     if (kvp.Key.Length == 1)
                         vocabDict[kvp.Key[0]] = kvp.Value;
 
-            vocabDictInstance = vocabDict;
             return vocabDict;
         }
         catch (Exception ex)
@@ -651,7 +589,4 @@ public class MmsForceAligner
             return new Dictionary<char, int>();
         }
     }
-
-    // Поле tokens — нужно для доступа в методе BeamSearchAlign
-    private List<char> tokens = new();
 }
