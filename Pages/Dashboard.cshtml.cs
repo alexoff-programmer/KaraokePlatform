@@ -415,7 +415,7 @@ public class DashboardModel : PageModel
         var tasks = await _context.KaraokeTasks
             .OrderByDescending(t => t.CreatedAt)
             .Take(10)
-            .Select(t => new { t.Id, t.OriginalFileName, t.Status })
+            .Select(t => new { t.Id, t.OriginalFileName, t.Status, t.Progress })
             .ToListAsync();
 
         return new JsonResult(new { users, tasks });

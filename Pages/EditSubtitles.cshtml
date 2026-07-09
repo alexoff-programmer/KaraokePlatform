@@ -24,6 +24,7 @@
                 <form method="post" asp-page-handler="Save">
                     @Html.AntiForgeryToken()
                     <input type="hidden" asp-for="TaskId" id="taskIdHidden" />
+                    <input type="hidden" asp-for="DetectedLinesJson" id="detectedLinesJsonInput" />
 
                     <div class="vstack gap-3 mb-4" style="max-height: 50vh; overflow-y: auto; padding-right: 10px;">
                         @for (int i = 0; i < Model.EditedLines.Count; i++)
@@ -50,31 +51,60 @@
 
 <!-- Gemini Settings and Action Modal -->
 <div class="modal fade" id="geminiModal" tabindex="-1" aria-labelledby="geminiModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content border-0 shadow rounded-4">
             <div class="modal-header border-bottom-0">
                 <h5 class="modal-title fw-bold" id="geminiModalLabel"><i class="bi bi-magic me-2 text-primary"></i>Улучшение субтитров с Gemini</h5>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body pb-4">
-                <div class="mb-3">
-                    <label for="geminiApiKey" class="form-label small fw-bold text-white-50">Gemini API Key</label>
-                    <input type="password" id="geminiApiKey" class="form-control form-control-lg rounded-3" placeholder="AIzaSy..." autocomplete="off" />
-                    <div class="form-text small text-white-50">Ключ сохраняется локально в вашем браузере.</div>
+                <div id="geminiSettingsSection">
+                    <div class="mb-3">
+                        <label for="geminiApiKey" class="form-label small fw-bold text-white-50">Gemini API Key</label>
+                        <input type="password" id="geminiApiKey" class="form-control form-control-lg rounded-3" placeholder="AIzaSy..." autocomplete="off" />
+                        <div class="form-text small text-white-50">Ключ сохраняется локально в вашем браузере.</div>
+                    </div>
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="geminiAutoImprove" />
+                        <label class="form-check-label small fw-bold text-white-50" for="geminiAutoImprove">Автоматическое улучшение при загрузке</label>
+                        <div class="form-text small text-white-50">Если включено, новые песни будут автоматически улучшаться перед ручным редактированием.</div>
+                    </div>
+                    <div class="mb-4">
+                        <label for="geminiCustomPrompt" class="form-label small fw-bold text-white-50">Дополнительные инструкции для ИИ (промпт)</label>
+                        <textarea id="geminiCustomPrompt" class="form-control form-control-lg rounded-3" rows="2" placeholder="Сюда можно вставить текст песни или дополнительные инструкции для ИИ..." autocomplete="off"></textarea>
+                    </div>
+                    
+                    <div class="vstack gap-2">
+                        <button type="button" id="btnRunGeminiImprovement" class="btn btn-primary btn-lg rounded-pill w-100 fw-bold">
+                            <i class="bi bi-play-circle me-2"></i>Запустить улучшение текста
+                        </button>
+                        <button type="button" id="btnSaveGeminiSettings" class="btn btn-gallery-adaptive btn-lg rounded-pill w-100">
+                            Сохранить настройки
+                        </button>
+                    </div>
                 </div>
-                <div class="form-check form-switch mb-4">
-                    <input class="form-check-input" type="checkbox" id="geminiAutoImprove" />
-                    <label class="form-check-label small fw-bold text-white-50" for="geminiAutoImprove">Автоматическое улучшение при загрузке</label>
-                    <div class="form-text small text-white-50">Если включено, новые песни будут автоматически улучшаться перед ручным редактированием.</div>
-                </div>
-                
-                <div class="vstack gap-2">
-                    <button type="button" id="btnRunGeminiImprovement" class="btn btn-primary btn-lg rounded-pill w-100 fw-bold">
-                        <i class="bi bi-play-circle me-2"></i>Запустить улучшение текста
-                    </button>
-                    <button type="button" id="btnSaveGeminiSettings" class="btn btn-gallery-adaptive btn-lg rounded-pill w-100">
-                        Сохранить настройки
-                    </button>
+
+                <!-- Comparison Review Section (Initially hidden) -->
+                <div id="geminiComparisonSection" class="d-none">
+                    <h6 class="fw-bold mb-3"><i class="bi bi-arrow-left-right text-info me-2"></i>Сравнение улучшений Gemini</h6>
+                    <div class="table-responsive mb-4 gemini-comparison-table-wrapper">
+                        <table class="table table-hover align-middle mb-0" style="font-size: 0.9rem;">
+                            <thead>
+                                <tr class="text-secondary small border-bottom">
+                                    <th style="width: 8%" class="text-center"><input type="checkbox" id="selectAllGeminiLines" checked class="form-check-input" /></th>
+                                    <th style="width: 46%">Оригинал</th>
+                                    <th style="width: 46%">После улучшения</th>
+                                </tr>
+                            </thead>
+                            <tbody id="geminiComparisonTableBody">
+                                <!-- Dynamically populated rows -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="d-flex gap-3">
+                        <button type="button" class="btn btn-gallery-adaptive rounded-pill flex-grow-1" id="btnCancelGeminiComparison">Отмена</button>
+                        <button type="button" class="btn btn-success rounded-pill flex-grow-1 fw-bold" id="btnApplyGeminiComparison">Применить выбранное</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -85,19 +115,28 @@
     <script>
         const apiKeyInput = document.getElementById('geminiApiKey');
         const autoImproveCheckbox = document.getElementById('geminiAutoImprove');
+        const customPromptInput = document.getElementById('geminiCustomPrompt');
 
         // Load settings from localStorage
         function loadSettings() {
             apiKeyInput.value = localStorage.getItem('geminiApiKey') || '';
             autoImproveCheckbox.checked = localStorage.getItem('geminiAutoImprove') === 'true';
+            if (customPromptInput) {
+                customPromptInput.value = localStorage.getItem('geminiCustomPrompt') || '';
+            }
         }
 
         // Save settings to localStorage
         function saveSettings() {
             localStorage.setItem('geminiApiKey', apiKeyInput.value.trim());
             localStorage.setItem('geminiAutoImprove', autoImproveCheckbox.checked ? 'true' : 'false');
+            if (customPromptInput) {
+                localStorage.setItem('geminiCustomPrompt', customPromptInput.value.trim());
+            }
             alert('Настройки Gemini успешно сохранены!');
         }
+
+        let lastGeminiResponse = null;
 
         // Run manual Gemini lyrics correction and MMS realignment pipeline
         async function runGeminiImprovement() {
@@ -110,11 +149,14 @@
             // Save key first
             localStorage.setItem('geminiApiKey', apiKey);
             localStorage.setItem('geminiAutoImprove', autoImproveCheckbox.checked ? 'true' : 'false');
+            if (customPromptInput) {
+                localStorage.setItem('geminiCustomPrompt', customPromptInput.value.trim());
+            }
 
             const btnRun = document.getElementById('btnRunGeminiImprovement');
             const originalHtml = btnRun.innerHTML;
             btnRun.disabled = true;
-            btnRun.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Выравнивание ИИ...`;
+            btnRun.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>ИИ улучшает и выравнивает тайминги...`;
 
             try {
                 const response = await fetch('?handler=ImproveWithGemini', {
@@ -125,7 +167,8 @@
                     },
                     body: JSON.stringify({
                         taskId: document.getElementById('taskIdHidden').value,
-                        geminiApiKey: apiKey
+                        geminiApiKey: apiKey,
+                        customPrompt: customPromptInput ? customPromptInput.value.trim() : ''
                     })
                 });
 
@@ -136,8 +179,28 @@
 
                 const result = await response.json();
                 if (result.success) {
-                    alert('Субтитры успешно улучшены и заново выровнены с помощью Gemini!');
-                    location.reload();
+                    lastGeminiResponse = result;
+
+                    // Show comparison table, hide settings panel
+                    document.getElementById('geminiSettingsSection').classList.add('d-none');
+                    document.getElementById('geminiComparisonSection').classList.remove('d-none');
+
+                    const tbody = document.getElementById('geminiComparisonTableBody');
+                    tbody.innerHTML = '';
+
+                    for (let i = 0; i < result.originalLines.length; i++) {
+                        const original = result.originalLines[i];
+                        const improved = result.improvedLines[i];
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td class="text-center">
+                                <input type="checkbox" class="form-check-input gemini-line-chk" data-index="${i}" checked />
+                            </td>
+                            <td class="text-secondary">${original}</td>
+                            <td class="text-primary fw-semibold">${improved}</td>
+                        `;
+                        tbody.appendChild(row);
+                    }
                 } else {
                     alert('Ошибка улучшения: ' + (result.message || 'неизвестная ошибка.'));
                 }
@@ -148,6 +211,60 @@
                 btnRun.innerHTML = originalHtml;
             }
         }
+
+        const resetGeminiModal = () => {
+            document.getElementById('geminiSettingsSection').classList.remove('d-none');
+            document.getElementById('geminiComparisonSection').classList.add('d-none');
+            lastGeminiResponse = null;
+        };
+
+        document.getElementById('btnCancelGeminiComparison').addEventListener('click', resetGeminiModal);
+        
+        // Select All checkboxes listener
+        document.getElementById('selectAllGeminiLines').addEventListener('change', (e) => {
+            const chks = document.querySelectorAll('.gemini-line-chk');
+            chks.forEach(chk => {
+                chk.checked = e.target.checked;
+            });
+        });
+
+        document.getElementById('btnApplyGeminiComparison').addEventListener('click', () => {
+            if (!lastGeminiResponse) return;
+
+            const checkboxes = document.querySelectorAll('.gemini-line-chk');
+            const mainInputs = document.querySelectorAll('.vstack.gap-3 input[type="text"]');
+
+            const alignedPhrases = JSON.parse(lastGeminiResponse.detectedLinesJson);
+            const dbPhrases = JSON.parse(lastGeminiResponse.dbPhrasesJson);
+
+            checkboxes.forEach(chk => {
+                const idx = parseInt(chk.getAttribute('data-index'));
+                if (chk.checked) {
+                    if (mainInputs[idx]) {
+                        mainInputs[idx].value = lastGeminiResponse.improvedLines[idx];
+                    }
+                } else {
+                    // Revert aligned phrase back to database original
+                    if (dbPhrases && dbPhrases[idx]) {
+                        alignedPhrases[idx] = dbPhrases[idx];
+                    }
+                }
+            });
+
+            // Update hidden DetectedLinesJson field
+            document.getElementById('detectedLinesJsonInput').value = JSON.stringify(alignedPhrases);
+
+            // Close modal
+            const modalEl = document.getElementById('geminiModal');
+            const modalInstance = bootstrap.Modal.getInstance(modalEl);
+            if (modalInstance) {
+                modalInstance.hide();
+            }
+
+            resetGeminiModal();
+
+            alert('Выбранные улучшения применены. Проверьте строки на странице и нажмите "Утвердить и собрать видео".');
+        });
 
         document.getElementById('btnSaveGeminiSettings').addEventListener('click', saveSettings);
         document.getElementById('btnRunGeminiImprovement').addEventListener('click', runGeminiImprovement);

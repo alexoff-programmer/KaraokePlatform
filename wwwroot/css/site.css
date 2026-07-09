@@ -96,6 +96,7 @@ footer.footer {
 
 .btn-primary:hover {
     opacity: 0.9;
+    color: rgba(255, 255, 255, 0.85) !important;
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2) inset, 0 6px 20px rgba(168, 85, 247, 0.5);
     transform: translateY(-1px);
 }
@@ -375,7 +376,7 @@ select option {
 .btn-action-glass:hover {
     background: rgba(168, 85, 247, 0.2) !important;
     border-color: var(--accent-color) !important;
-    color: #fff !important;
+    color: rgba(255, 255, 255, 0.85) !important;
     box-shadow: 0 0 10px rgba(168, 85, 247, 0.3);
 }
 
@@ -393,7 +394,7 @@ select option {
 .btn-action-danger-glass:hover {
     background: rgba(239, 68, 68, 0.25) !important;
     border-color: rgba(239, 68, 68, 0.4) !important;
-    color: #fff !important;
+    color: rgba(255, 255, 255, 0.85) !important;
     box-shadow: 0 0 10px rgba(239, 68, 68, 0.3);
 }
 
@@ -706,27 +707,27 @@ select option {
 .btn-gallery-adaptive:hover {
     background: rgba(168, 85, 247, 0.15) !important;
     border-color: var(--accent-color) !important;
-    color: var(--accent-color) !important;
+    color: rgba(255, 255, 255, 0.85) !important;
     box-shadow: 0 0 10px rgba(168, 85, 247, 0.2);
 }
 
 [data-theme="light"] .btn-gallery-adaptive:hover {
     background: rgba(2, 136, 209, 0.1) !important;
     border-color: var(--accent-color) !important;
-    color: var(--accent-color) !important;
+    color: rgba(13, 37, 63, 0.75) !important;
 }
 
 /* ------ BTN-ACTION-GLASS HOVER: keep text readable in light ------  */
 [data-theme="light"] .btn-action-glass:hover {
     background: rgba(2, 136, 209, 0.12) !important;
     border-color: var(--accent-color) !important;
-    color: var(--accent-color) !important;
+    color: rgba(13, 37, 63, 0.75) !important;
     box-shadow: 0 0 10px rgba(2, 136, 209, 0.2);
 }
 
 [data-theme="light"] .btn-action-danger-glass:hover {
     background: rgba(239, 68, 68, 0.15) !important;
-    color: #dc2626 !important;
+    color: rgba(185, 28, 28, 0.8) !important;
 }
 
 /* ------ ACCORDION BODY PADDING ------  */
@@ -808,4 +809,32 @@ select option {
 [data-theme="light"] select option {
     background-color: #ffffff !important;
     color: #0d253f !important;
+}
+
+/* ------ GEMINI COMPARISON TABLE WRAPPER ------  */
+.gemini-comparison-table-wrapper {
+    max-height: 45vh;
+    overflow-y: auto;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+}
+
+[data-theme="light"] .gemini-comparison-table-wrapper {
+    background: rgba(13, 37, 63, 0.04);
+}
+
+/* ------ HEADER THEME SWITCH & ADMIN TOGGLE HOVERS ------  */
+#themeToggleBtn:hover,
+#adminSidebarToggle:hover {
+    background-color: rgba(255, 255, 255, 0.15) !important;
+    border-color: rgba(255, 255, 255, 0.35) !important;
+    color: rgba(255, 255, 255, 0.9) !important;
+}
+
+[data-theme="light"] #themeToggleBtn:hover,
+[data-theme="light"] #adminSidebarToggle:hover {
+    background-color: rgba(13, 37, 63, 0.08) !important;
+    border-color: rgba(13, 37, 63, 0.25) !important;
+    color: rgba(13, 37, 63, 0.85) !important;
 }

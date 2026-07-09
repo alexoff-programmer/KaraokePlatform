@@ -27,11 +27,11 @@ public class AssSubtitleGenerator : ISubtitleGenerator
     // Maps UI font names to system-installed font names in the Docker container
     private static string MapFontName(string? uiFont) => uiFont switch
     {
-        "Inter" => "Open Sans",
-        "Outfit" => "Open Sans",
-        "Courier New" => "DejaVu Sans Mono",
-        "Montserrat" => "Open Sans",
-        _ => "Open Sans"
+        "Inter" => "Inter",
+        "Outfit" => "Outfit",
+        "Courier New" => "Courier New",
+        "Montserrat" => "Montserrat",
+        _ => "Outfit"
     };
 
     public string GenerateKaraokeMarkup(List<WordTimeInfo> words, string? fontName = null, string? fillStyle = null, string? primaryColor = null, string? secondaryColor = null, string? videoFormat = null)
@@ -81,7 +81,7 @@ public class AssSubtitleGenerator : ISubtitleGenerator
         sb.AppendLine();
         sb.AppendLine("[V4+ Styles]");
         sb.AppendLine("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding");
-        sb.AppendLine($"Style: KaraokeStyle,{font},{fontSize},{priCol},{activeColor},&H00000000,&H00000000,-1,0,0,0,100,100,2,0,1,2,0,5,100,100,0,1");
+        sb.AppendLine($"Style: KaraokeStyle,{font},{fontSize},{activeColor},{priCol},&H00000000,&H00000000,-1,0,0,0,100,100,2,0,1,2,0,5,100,100,0,1");
         sb.AppendLine();
         sb.AppendLine("[Events]");
         sb.AppendLine("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text");
@@ -423,5 +423,118 @@ public class AssSubtitleGenerator : ISubtitleGenerator
         }
 
         return cleanWords;
+    }
+
+    public string GenerateKaraokeMarkupFromPhrases(List<List<WordTimeInfo>> phrases, string? fontName = null, string? fillStyle = null, string? primaryColor = null, string? secondaryColor = null, string? videoFormat = null)
+    {
+        if (phrases == null || phrases.Count == 0) return string.Empty;
+
+        var sb = new StringBuilder();
+        BuildAssHeader(sb, fontName, fillStyle, primaryColor, secondaryColor, videoFormat);
+
+        // Deep copy phrases to avoid editing in-memory objects bound to DB context
+        var phrasesCopy = new List<List<WordTimeInfo>>();
+        foreach (var phrase in phrases)
+        {
+            if (phrase == null || phrase.Count == 0) continue;
+            var phraseCopy = phrase.Select(w => w with { }).ToList();
+            phrasesCopy.Add(phraseCopy);
+        }
+
+        if (phrasesCopy.Count == 0) return string.Empty;
+
+        // Apply interpolation on each phrase
+        for (int i = 0; i < phrasesCopy.Count; i++)
+        {
+            phrasesCopy[i] = InterpolateWordTimings(phrasesCopy[i]);
+        }
+
+        ExtendPhraseEnds(phrasesCopy);
+        BuildDialogueLinesFromPhrases(sb, phrasesCopy);
+
+        return sb.ToString();
+    }
+
+    private void BuildDialogueLinesFromPhrases(StringBuilder sb, List<List<WordTimeInfo>> phrases)
+    {
+        TimeSpan absoluteMinStart = TimeSpan.Zero;
+
+        for (int i = 0; i < phrases.Count; i++)
+        {
+            var phrase = phrases[i];
+
+            var phraseStart = phrase.First().Start - TimeShift;
+            var phraseEnd = phrase.Last().End - TimeShift;
+
+            if (phraseStart < TimeSpan.Zero) phraseStart = TimeSpan.Zero;
+            if (phraseEnd < phraseStart) phraseEnd = phraseStart;
+
+            var lineStart = phraseStart - LeadInTime;
+            if (lineStart < TimeSpan.Zero) lineStart = TimeSpan.Zero;
+
+            if (lineStart < absoluteMinStart)
+            {
+                lineStart = absoluteMinStart;
+            }
+            if (lineStart > phraseStart) lineStart = phraseStart;
+
+            var lineEnd = phraseEnd;
+            if (lineEnd < lineStart) lineEnd = lineStart + TimeSpan.FromMilliseconds(500);
+
+            absoluteMinStart = lineEnd + TimeSpan.FromMilliseconds(FadeBufferMs);
+
+            string assStart = FormatTimeSpanForAss(lineStart);
+            string assEnd = FormatTimeSpanForAss(lineEnd);
+
+            var lineBuilder = new StringBuilder($"{{\\fad({FadeTimeMs}, {FadeTimeMs})}}");
+
+            int delayCs = (int)Math.Round((phraseStart - lineStart).TotalMilliseconds / 10.0);
+            if (delayCs > 0)
+            {
+                lineBuilder.Append($"{{\\k{delayCs}}}");
+            }
+
+            TimeSpan currentTime = phraseStart;
+
+            for (int j = 0; j < phrase.Count; j++)
+            {
+                var word = phrase[j];
+                var shiftedWordStart = word.Start - TimeShift;
+                var shiftedWordEnd = word.End - TimeShift;
+
+                if (shiftedWordStart < TimeSpan.Zero) shiftedWordStart = TimeSpan.Zero;
+                if (shiftedWordEnd < shiftedWordStart) shiftedWordEnd = shiftedWordStart;
+
+                if (shiftedWordStart < currentTime)
+                {
+                    var overlap = currentTime - shiftedWordStart;
+                    shiftedWordStart = currentTime;
+                    shiftedWordEnd += overlap;
+                }
+
+                var pauseDuration = shiftedWordStart - currentTime;
+                if (pauseDuration.TotalMilliseconds > 10)
+                {
+                    int pauseCs = (int)Math.Round(pauseDuration.TotalMilliseconds / 10.0);
+                    if (pauseCs > 0) lineBuilder.Append($"{{\\kf{pauseCs}}}");
+                }
+
+                int wordCs = (int)Math.Round((shiftedWordEnd - shiftedWordStart).TotalMilliseconds / 10.0);
+                if (wordCs <= 0) wordCs = 1;
+
+                string trailingSpace = (j != phrase.Count - 1) ? " " : "";
+                lineBuilder.Append($"{{\\kf{wordCs}}}{word.Text}{trailingSpace}");
+
+                currentTime = shiftedWordEnd;
+            }
+
+            if (currentTime < lineEnd)
+            {
+                int finalWaitCs = (int)Math.Round((lineEnd - currentTime).TotalMilliseconds / 10.0);
+                if (finalWaitCs > 0) lineBuilder.Append($"{{\\kf{finalWaitCs}}}");
+            }
+
+            sb.AppendLine($"Dialogue: 0,{assStart},{assEnd},KaraokeStyle,,0,0,0,,{lineBuilder}");
+        }
     }
 }

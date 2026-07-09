@@ -73,48 +73,46 @@
                     <i class="bi bi-people-fill me-2" style="color: var(--accent-color);"></i>Список пользователей
                 </h5>
 
-                <div class="table-responsive">
-                    <table class="table table-hover align-middle">
-                        <thead>
-                            <tr>
-                                <th class="small" style="color: var(--text-secondary); font-weight: 600;">Логин</th>
-                                <th class="small" style="color: var(--text-secondary); font-weight: 600;">Роль</th>
-                                <th class="small" style="color: var(--text-secondary); font-weight: 600;">Регистрация</th>
-                                <th class="small text-center" style="color: var(--text-secondary); font-weight: 600;">Видео</th>
-                                <th class="small text-end" style="color: var(--text-secondary); font-weight: 600;">Действия</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var user in Model.ExistingUsers)
-                            {
-                                <tr>
-                                    <td class="fw-bold">@user.Username</td>
-                                    <td>
+                <div class="vstack gap-3" id="usersListContainer">
+                    @foreach (var user in Model.ExistingUsers)
+                    {
+                        <div class="sidebar-task-card d-flex flex-column flex-sm-row align-items-sm-center justify-content-between p-3 gap-3">
+                            <div class="d-flex align-items-center gap-3 text-truncate" style="flex: 1; min-width: 0;">
+                                <div class="flex-shrink-0">
+                                    <div class="d-flex align-items-center justify-content-center rounded-circle" style="width: 40px; height: 40px; background: rgba(168, 85, 247, 0.1); border: 1px solid rgba(168, 85, 247, 0.2);">
+                                        <i class="bi bi-person text-primary" style="font-size: 1.2rem;"></i>
+                                    </div>
+                                </div>
+                                <div class="text-truncate" style="min-width: 0;">
+                                    <div class="fw-bold text-white text-truncate mb-1">@user.Username</div>
+                                    <div class="d-flex align-items-center gap-2 small">
+                                        <span class="text-white-50">@user.CreatedAt.ToLocalTime().ToString("d")</span>
+                                        <span class="text-white-50 opacity-25">|</span>
                                         @if (user.Role == Role.Admin)
                                         {
-                                            <span class="badge badge-admin-glass rounded-pill px-2 py-1">Admin</span>
+                                            <span class="badge badge-admin-glass rounded-pill px-2.5 py-0.5" style="font-size: 0.65rem">Admin</span>
                                         }
                                         else
                                         {
-                                            <span class="badge badge-user-glass rounded-pill px-2 py-1">User</span>
+                                            <span class="badge badge-user-glass rounded-pill px-2.5 py-0.5" style="font-size: 0.65rem">User</span>
                                         }
-                                    </td>
-                                    <td class="small" style="color: var(--text-secondary);">@user.CreatedAt.ToLocalTime().ToString("d")</td>
-                                    <td class="text-center fw-bold" style="color: var(--text-secondary);">@user.Tasks.Count</td>
-                                    <td class="text-end">
-                                        <form method="post" asp-page-handler="Delete" asp-route-id="@user.Id"
-                                              onsubmit="return confirm('Удалить пользователя @user.Username и все его видео?');"
-                                              style="display:inline;">
-                                            @Html.AntiForgeryToken()
-                                            <button type="submit" class="btn btn-action-danger-glass btn-sm">
-                                                <i class="bi bi-trash me-1"></i>Удалить
-                                            </button>
-                                        </form>
-                                    </td>
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
+                                        <span class="text-white-50 opacity-25">|</span>
+                                        <span class="text-white-50"><i class="bi bi-film me-1"></i>Видео: @user.Tasks.Count</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="text-end">
+                                <form method="post" asp-page-handler="Delete" asp-route-id="@user.Id"
+                                      onsubmit="return confirm('Удалить пользователя @user.Username и все его видео?');"
+                                      class="m-0">
+                                    @Html.AntiForgeryToken()
+                                    <button type="submit" class="btn btn-action-danger-glass">
+                                        <i class="bi bi-trash me-1"></i>Удалить
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    }
                 </div>
             </div>
         </div>

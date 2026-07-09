@@ -166,20 +166,8 @@
 
                     <!-- Users list heading -->
                     <h6 class="text-white-50 small fw-bold text-uppercase mb-3">Список пользователей</h6>
-                    <div class="table-responsive" style="max-height: 40vh; overflow-y: auto;">
-                        <table class="table table-dark table-hover align-middle border-0 text-white" id="sidebarUsersTable">
-                            <thead>
-                                <tr class="text-white-50 small border-bottom border-light-subtle">
-                                    <th class="border-0 bg-transparent text-white-50">Имя пользователя</th>
-                                    <th class="border-0 bg-transparent text-end text-white-50">Роль</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr>
-                                    <td colspan="2" class="text-center text-muted small py-4 border-0">Загрузка пользователей...</td>
-                                </tr>
-                            </tbody>
-                        </table>
+                    <div id="sidebarUsersContainer" class="vstack gap-2" style="max-height: 40vh; overflow-y: auto;">
+                        <div class="text-center py-4 text-muted small">Загрузка пользователей...</div>
                     </div>
                 </div>
             </div>
@@ -192,16 +180,29 @@
                 const backdrop = document.getElementById('adminSidebarBackdrop');
                 const closeBtn = document.getElementById('adminSidebarClose');
 
+                let adminPollingInterval = null;
+
                 if (toggleBtn && sidebar && backdrop) {
                     toggleBtn.addEventListener('click', () => {
                         sidebar.classList.add('active');
                         backdrop.classList.add('active');
                         fetchAdminData();
+                        
+                        // Start polling every 3 seconds when sidebar is open
+                        if (!adminPollingInterval) {
+                            adminPollingInterval = setInterval(fetchAdminData, 3000);
+                        }
                     });
 
                     const closeSidebar = () => {
                         sidebar.classList.remove('active');
                         backdrop.classList.remove('active');
+                        
+                        // Stop polling when sidebar is closed
+                        if (adminPollingInterval) {
+                            clearInterval(adminPollingInterval);
+                            adminPollingInterval = null;
+                        }
                     };
 
                     closeBtn.addEventListener('click', closeSidebar);
@@ -361,18 +362,16 @@
                         }
                     }
 
-                    const usersTableBody = document.querySelector('#sidebarUsersTable tbody');
-                    if (usersTableBody) {
+                    const usersContainer = document.getElementById('sidebarUsersContainer');
+                    if (usersContainer) {
                         if (data.users.length === 0) {
-                            usersTableBody.innerHTML = `<tr><td colspan="2" class="text-center text-muted small py-4 border-0">Нет пользователей.</td></tr>`;
+                            usersContainer.innerHTML = `<div class="text-center py-4 text-muted small">Нет пользователей.</div>`;
                         } else {
-                            usersTableBody.innerHTML = data.users.map(u => `
-                                <tr class="border-bottom border-light-subtle">
-                                    <td class="border-0 bg-transparent fw-semibold text-white py-3">${u.username}</td>
-                                    <td class="border-0 bg-transparent text-end py-3">
-                                        <span class="badge ${u.role === 1 ? 'badge-admin-glass' : 'badge-user-glass'} rounded-pill px-2.5 py-1 text-uppercase" style="font-size: 0.65rem">${u.role === 1 ? 'Admin' : 'User'}</span>
-                                    </td>
-                                </tr>
+                            usersContainer.innerHTML = data.users.map(u => `
+                                <div class="sidebar-task-card d-flex align-items-center justify-content-between p-2.5 mb-1">
+                                    <div class="fw-semibold text-white text-truncate me-2" style="font-size: 0.85rem">${u.username}</div>
+                                    <span class="badge ${u.role === 1 ? 'badge-admin-glass' : 'badge-user-glass'} rounded-pill px-2.5 py-1 text-uppercase" style="font-size: 0.6rem">${u.role === 1 ? 'Admin' : 'User'}</span>
+                                </div>
                             `).join('');
                         }
                     }

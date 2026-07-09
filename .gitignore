@@ -26,6 +26,7 @@ Models/
 instance/
 wwwroot/
 *.tar
+*.whl
 
 # .NET Core
 project.lock.json

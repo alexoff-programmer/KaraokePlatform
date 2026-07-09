@@ -161,7 +161,7 @@ public class WhisperRecognizer : ISpeechRecognizer
         return alignedWords;
     }
 
-    private async Task<List<(string Text, TimeSpan Start, TimeSpan End)>> ImproveSegmentsWithGeminiAsync(
+    public async Task<List<(string Text, TimeSpan Start, TimeSpan End)>> ImproveSegmentsWithGeminiAsync(
         List<(string Text, TimeSpan Start, TimeSpan End)> segments,
         string apiKey,
         string? trackName = null)
@@ -175,7 +175,9 @@ public class WhisperRecognizer : ISpeechRecognizer
 
             var songTitle = string.IsNullOrEmpty(trackName) ? "Song" : trackName;
             var promptText = $"You are an expert lyrics editor. Adapt the subtitles for the track '{songTitle}'.\n" +
-                             "If there is unintelligible English text written in Cyrillic letters (e.g. 'ай лав ю'), replace it with standard, grammatically correct English expressions ('I love you').\n" +
+                             "CRITICAL: Do NOT translate the text to another language. Keep the original language of the lyrics intact. If the input text is in Russian, the output MUST be in Russian. If the input text is in English, the output MUST be in English.\n" +
+                             "Only correct spelling errors, typos, punctuation, and formatting.\n" +
+                             "If and only if there are obvious English words phonetically transliterated into Cyrillic (e.g. 'ай лав ю'), you may replace those specific words with standard English ('I love you'), but do NOT translate any other parts of the text.\n" +
                              "The text must be meaningful and correspond to the original song context.\n" +
                              "Keep the exact same number of elements in the output array as the input array. " +
                              "Do not combine or split segments. " +

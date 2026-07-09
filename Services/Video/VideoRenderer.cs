@@ -25,10 +25,11 @@ public class VideoRenderer
         int videoW = isLandscape ? 1920 : 1080;
         int videoH = isLandscape ? 1080 : 1920;
 
-        // Экранируем пути для FFmpeg фильтра subtitles
-        string escapedAssPath = assSubtitlesPath.Replace("\\", "/").Replace(":", "\\:");
-        // Путь к системным шрифтам для libass
-        string fontsDir = "/usr/share/fonts";
+        // Convert to relative paths to avoid Windows drive letters and colon issues in FFmpeg filter graph
+        string relativeAssPath = Path.GetRelativePath(Directory.GetCurrentDirectory(), assSubtitlesPath);
+        string escapedAssPath = relativeAssPath.Replace("\\", "/");
+        // Use local Fonts folder for fontsdir (fully relative)
+        string fontsDir = "Fonts";
 
         double audioDurationSeconds;
         audioDurationSeconds = await GetAudioDurationAsync(audioPath);

@@ -59,6 +59,9 @@ public class EditSubtitlesModel : PageModel
     [BindProperty]
     public List<string> EditedLines { get; set; } = new();
 
+    [BindProperty]
+    public string? DetectedLinesJson { get; set; }
+
     public string OriginalFileName { get; set; } = string.Empty;
 
     public async Task<IActionResult> OnGetAsync(Guid taskId)
@@ -91,7 +94,15 @@ public class EditSubtitlesModel : PageModel
         var task = await _context.KaraokeTasks.FirstOrDefaultAsync(t => t.Id == TaskId);
         if (task == null) return RedirectToPage("/Dashboard");
 
-        var originalPhrases = JsonSerializer.Deserialize<List<List<WordTimeInfo>>>(task.DetectedLinesJson ?? "[]") ?? new();
+        List<List<WordTimeInfo>> originalPhrases;
+        if (!string.IsNullOrEmpty(DetectedLinesJson))
+        {
+            originalPhrases = JsonSerializer.Deserialize<List<List<WordTimeInfo>>>(DetectedLinesJson) ?? new();
+        }
+        else
+        {
+            originalPhrases = JsonSerializer.Deserialize<List<List<WordTimeInfo>>>(task.DetectedLinesJson ?? "[]") ?? new();
+        }
 
         if (originalPhrases.Count != EditedLines.Count)
         {
@@ -99,14 +110,28 @@ public class EditSubtitlesModel : PageModel
             return Page();
         }
 
-        // 1. Пересчитываем тайминги (этот блок без изменений)
+        // 1. Пересчитываем тайминги (только для измененных строк)
         for (int i = 0; i < originalPhrases.Count; i++)
         {
             var oldPhraseWords = originalPhrases[i];
             var newTextLine = EditedLines[i]?.Trim() ?? string.Empty;
-            var newWords = newTextLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            
+            if (oldPhraseWords == null || oldPhraseWords.Count == 0) continue;
 
-            if (newWords.Length == 0 || oldPhraseWords == null || oldPhraseWords.Count == 0) continue;
+            // Сравниваем текст строки до и после
+            var oldTextLine = string.Join(" ", oldPhraseWords.Where(w => w != null && w.Text != null).Select(w => w.Text)).Trim();
+            if (newTextLine == oldTextLine)
+            {
+                // Текст не менялся, сохраняем оригинальные точные тайминги!
+                continue;
+            }
+
+            var newWords = newTextLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (newWords.Length == 0)
+            {
+                originalPhrases[i] = new();
+                continue;
+            }
 
             TimeSpan phraseStart = oldPhraseWords.First().Start;
             TimeSpan phraseEnd = oldPhraseWords.Last().End;
@@ -136,14 +161,12 @@ public class EditSubtitlesModel : PageModel
             originalPhrases[i] = redistributedWords;
         }
 
-        var finalWordsList = originalPhrases.Where(p => p != null).SelectMany(p => p).ToList();
-
         // 2. Генерируем чистовые субтитры .ass
         var outputFolder = Path.Combine(_environment.WebRootPath, "output");
         var assFileName = $"{task.Id}.ass";
         var assOutputPath = Path.Combine(outputFolder, assFileName);
 
-        string assContent = _subtitleGenerator.GenerateKaraokeMarkup(finalWordsList, task.SubtitleFont, task.FillStyle, task.PrimaryColor, task.SecondaryColor, task.VideoFormat);
+        string assContent = _subtitleGenerator.GenerateKaraokeMarkupFromPhrases(originalPhrases, task.SubtitleFont, task.FillStyle, task.PrimaryColor, task.SecondaryColor, task.VideoFormat);
         await System.IO.File.WriteAllTextAsync(assOutputPath, assContent, Encoding.UTF8);
 
         // 3. Обновляем JSON фраз в БД, чтобы зафиксировать правки текста
@@ -176,6 +199,7 @@ public class EditSubtitlesModel : PageModel
     {
         public Guid TaskId { get; set; }
         public string GeminiApiKey { get; set; } = string.Empty;
+        public string? CustomPrompt { get; set; }
     }
 
     public async Task<IActionResult> OnPostImproveWithGeminiAsync([FromBody] GeminiRequest request)
@@ -198,7 +222,7 @@ public class EditSubtitlesModel : PageModel
 
         // 2. Call Gemini for lyrics correction
         string? trackTitle = task != null ? Path.GetFileNameWithoutExtension(task.OriginalFileName) : null;
-        var correctedLines = await ImproveLinesWithGeminiAsync(currentLines, request.GeminiApiKey, trackTitle);
+        var correctedLines = await ImproveLinesWithGeminiAsync(currentLines, request.GeminiApiKey, trackTitle, request.CustomPrompt);
 
         if (correctedLines.Count != originalPhrases.Count)
         {
@@ -297,11 +321,13 @@ public class EditSubtitlesModel : PageModel
             }
         }
 
-        // 4. Save to task DB
-        task.DetectedLinesJson = JsonSerializer.Serialize(updatedPhrases);
-        await _context.SaveChangesAsync();
-
-        return new JsonResult(new { success = true });
+        return new JsonResult(new { 
+            success = true, 
+            originalLines = currentLines, 
+            improvedLines = correctedLines, 
+            detectedLinesJson = JsonSerializer.Serialize(updatedPhrases),
+            dbPhrasesJson = JsonSerializer.Serialize(originalPhrases)
+        });
     }
 
     private List<WordTimeInfo> RedistributeProportional(List<WordTimeInfo> oldPhraseWords, string newTextLine)
@@ -337,7 +363,7 @@ public class EditSubtitlesModel : PageModel
         return redistributedWords;
     }
 
-    private async Task<List<string>> ImproveLinesWithGeminiAsync(List<string> currentLines, string apiKey, string? trackName = null)
+    private async Task<List<string>> ImproveLinesWithGeminiAsync(List<string> currentLines, string apiKey, string? trackName = null, string? customPrompt = null)
     {
         try
         {
@@ -345,8 +371,16 @@ public class EditSubtitlesModel : PageModel
 
             var songTitle = string.IsNullOrEmpty(trackName) ? "Song" : trackName;
             var promptText = $"You are an expert lyrics editor. Adapt the subtitles for the track '{songTitle}'.\n" +
-                             "If there is unintelligible English text written in Cyrillic letters (e.g. 'ай лав ю'), replace it with standard, grammatically correct English expressions ('I love you').\n" +
-                             "The text must be meaningful and correspond to the original song context.\n" +
+                             "CRITICAL: Do NOT translate the text to another language. Keep the original language of the lyrics intact. If the input text is in Russian, the output MUST be in Russian. If the input text is in English, the output MUST be in English.\n" +
+                             "Only correct spelling errors, typos, punctuation, and formatting.\n" +
+                             "If and only if there are obvious English words phonetically transliterated into Cyrillic (e.g. 'ай лав ю'), you may replace those specific words with standard English ('I love you'), but do NOT translate any other parts of the text.\n";
+
+            if (!string.IsNullOrWhiteSpace(customPrompt))
+            {
+                promptText += $"Apply the following user instructions: {customPrompt}\n";
+            }
+
+            promptText += "The text must be meaningful and correspond to the original song context.\n" +
                              "Keep the exact same number of elements in the output array as the input array. " +
                              "Do not combine or split segments. " +
                              "Return the output strictly in JSON format as an object containing the key \"corrected_segments\", which is an array of strings. " +
