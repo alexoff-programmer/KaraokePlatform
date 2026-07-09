@@ -66,7 +66,7 @@ public static class KaraokeGeometryValidator
             cleanWords[i].Start = cleanWords[i - 1].End;
             if (cleanWords[i].End <= cleanWords[i].Start)
             {
-                cleanWords[i].End = cleanWords[i].Start.Add(TimeSpan.FromMilliseconds(50));
+                cleanWords[i].End = cleanWords[i].Start.Add(TimeSpan.FromMilliseconds(60));
             }
         }
 

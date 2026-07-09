@@ -24,7 +24,7 @@ public class MmsForceAligner
     // ──────────────────────────────────────────────────────────────────
     //  BEAM SEARCH ПАРАМЕТРЫ
     // ──────────────────────────────────────────────────────────────────
-    private const int BeamWidth = 8;                  // Лучших путей одновременно
+    private const int BeamWidth = 16;                 // Лучших путей одновременно
     private const float BoostAlpha = 3.0f;            // Усиление вероятности целевого символа
     private const float BlankPenalty = 0.6f;          // Штраф за ПРОПУСК blank-токена между словами
     private const float TransitionPenalty = 0.8f;     // Штраф за переход к следующему символу
@@ -121,6 +121,7 @@ public class MmsForceAligner
 
         int[] tokenIds = tokens.Select(c => vocabDict.TryGetValue(c, out int id) ? id : 3).ToArray();
         int N = tokenIds.Length;
+        this.tokens = tokens;
 
         // ── ONNX-инференс ─────────────────────────────────────────────
         float[,] logProbs = RunInference(processedSamples);
@@ -184,10 +185,11 @@ public class MmsForceAligner
 
         // ── УЛУЧШЕНИЕ 3: Двунаправленное выравнивание ─────────────────
         _logger.LogDebug("[Aligner] Запуск прямого прохода Beam Search (T={T}, N={N})...", T, N);
-        var (fwdPath, fwdScore) = BeamSearchAlign(logProbs, tokenIds, blankId, forward: true);
+        var (fwdPath, fwdScore) = BeamSearchAlign(logProbs, tokenIds, blankId, isSilent, forward: true);
 
         _logger.LogDebug("[Aligner] Запуск обратного прохода Beam Search...");
-        var (bwdPathRev, _) = BeamSearchAlign(ReverseLogProbs(logProbs), ReverseTokens(tokenIds), blankId, forward: false);
+        bool[] isSilentRev = isSilent.Reverse().ToArray();
+        var (bwdPathRev, _) = BeamSearchAlign(ReverseLogProbs(logProbs), ReverseTokens(tokenIds), blankId, isSilentRev, forward: false);
         var bwdPath = ReversePath(bwdPathRev, N);
 
         // Сшиваем два пути: прямой лучше находит начала слов, обратный — концы
@@ -249,26 +251,35 @@ public class MmsForceAligner
                 if (state + 1 < N)
                 {
                     int nextToken = tokenIds[state + 1];
-                    float advanceBoost = GetBoostedLogProb(logProbs, t, nextToken, state + 1, tokenIds);
 
-                    // ── УЛУЧШЕНИЕ 4: Штраф за пропуск разделителя '|' ──
-                    // Если перед переходом ожидается blank, но мы его не видим — штрафуем
-                    float penalty = 0f;
-                    if (tokens.Count > 0 && state < N - 1)
+                    // CTC Collapse Rule: if next character is identical to the current one,
+                    // we must have a blank token in between (prevPath[t-1] must be -1).
+                    bool isDuplicate = tokenIds[state] == nextToken;
+                    bool prevWasBlank = prevPath[t - 1] == -1;
+
+                    if (!isDuplicate || prevWasBlank)
                     {
-                        // Если следующий токен — разделитель '|', требуем blank между словами
-                        int pipeId = vocabDictInstance != null && vocabDictInstance.TryGetValue('|', out int pId) ? pId : -1;
-                        bool isWordBoundary = nextToken == pipeId;
-                        if (isWordBoundary)
-                        {
-                            float blankProb = logProbs[t, blankId];
-                            if (blankProb < -3.0f) // Нет явного blank — штраф
-                                penalty = -BlankPenalty;
-                        }
-                    }
+                        float advanceBoost = GetBoostedLogProb(logProbs, t, nextToken, state + 1, tokenIds);
 
-                    float advScore = prevScore + advanceBoost + penalty - TransitionPenalty;
-                    TryUpdateBeam(newBeams, state + 1, advScore, prevPath, t, state + 1);
+                        // ── УЛУЧШЕНИЕ 4: Штраф за пропуск разделителя '|' ──
+                        // Если перед переходом ожидается blank, но мы его не видим — штрафуем
+                        float penalty = 0f;
+                        if (tokens.Count > 0 && state < N - 1)
+                        {
+                            // Если следующий токен — разделитель '|', требуем blank между словами
+                            int pipeId = vocabDictInstance != null && vocabDictInstance.TryGetValue('|', out int pId) ? pId : -1;
+                            bool isWordBoundary = nextToken == pipeId;
+                            if (isWordBoundary)
+                            {
+                                float blankProb = logProbs[t, blankId];
+                                if (blankProb < -3.0f) // Нет явного blank — штраф
+                                    penalty = -BlankPenalty;
+                            }
+                        }
+
+                        float advScore = prevScore + advanceBoost + penalty - TransitionPenalty;
+                        TryUpdateBeam(newBeams, state + 1, advScore, prevPath, t, state + 1);
+                    }
                 }
 
                 // Вариант 3: ПРОПУСКАЕМ blank-токен (blank pass)
