@@ -172,19 +172,20 @@ public class MmsForceAligner
             }
         }
 
-        for (int t = 0; t < numFrames; t++)
-        {
-            if (!keepNormal[t])
-            {
-                for (int v = 0; v < vocabSize; v++)
-                {
-                    if (v == blankId)
-                        logProbs[t, v] = 0.0f;
-                    else
-                        logProbs[t, v] = -100.0f;
-                }
-            }
-        }
+        // [ОТКЛЮЧЕНО] Жесткая RMS-маска логитов переопределяла предсказания модели и вызывала потерю цепочки слов при тихом пении.
+        // for (int t = 0; t < numFrames; t++)
+        // {
+        //     if (!keepNormal[t])
+        //     {
+        //         for (int v = 0; v < vocabSize; v++)
+        //         {
+        //             if (v == blankId)
+        //                 logProbs[t, v] = 0.0f;
+        //             else
+        //                 logProbs[t, v] = -100.0f;
+        //         }
+        //     }
+        // }
 
         // Двунаправленное выравнивание с передачей локального контекста токенов
         _logger.LogDebug("[Aligner] Запуск прямого прохода Beam Search (T={T}, N={N})...", T, N);
@@ -256,7 +257,8 @@ public class MmsForceAligner
 
             foreach (var (state, prevScore, prevPath) in beams)
             {
-                if (state < idealCharIdx - 10 || state > idealCharIdx + 10)
+                // Расширенный диапазон поиска (±80 вместо ±10) предотвращает срез путей при неравномерном темпе
+                if (state < idealCharIdx - 80 || state > idealCharIdx + 80)
                 {
                     continue;
                 }

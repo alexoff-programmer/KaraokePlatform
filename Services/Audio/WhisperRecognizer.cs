@@ -11,6 +11,7 @@ using System.Net.Http;
 using System.Text.Json;
 using Whisper.net;
 using Whisper.net.Wave;
+using Whisper.net.Ggml;
 
 namespace KaraokePlatform.Services.Audio;
 
@@ -53,6 +54,40 @@ public class WhisperRecognizer : ISpeechRecognizer
         return _factory;
     }
 
+    private async Task EnsureModelDownloadedAsync()
+    {
+        if (File.Exists(_modelPath))
+        {
+            return;
+        }
+
+        var dir = Path.GetDirectoryName(_modelPath);
+        if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+        {
+            Directory.CreateDirectory(dir);
+        }
+
+        Console.WriteLine($"[Whisper] Model not found at {_modelPath}. Downloading LargeV3 model...");
+
+        var downloadUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin";
+        try
+        {
+            using var client = new HttpClient();
+            client.Timeout = TimeSpan.FromMinutes(20);
+            using var response = await client.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead);
+            response.EnsureSuccessStatusCode();
+            using var stream = await response.Content.ReadAsStreamAsync();
+            using var fileStream = new FileStream(_modelPath, FileMode.Create, FileAccess.Write, FileShare.None);
+            await stream.CopyToAsync(fileStream);
+            Console.WriteLine($"[Whisper] Model LargeV3 successfully downloaded to {_modelPath}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Whisper] Failed to download model: {ex.Message}");
+            throw;
+        }
+    }
+
     public async Task<List<WordTimeInfo>> TranscribeAndMergeTokensAsync(
         string wavPath,
         string language,
@@ -65,14 +100,23 @@ public class WhisperRecognizer : ISpeechRecognizer
 
         onProgress?.Invoke(10); // Начало
 
+        // Ensure the model is available on disk
+        await EnsureModelDownloadedAsync();
+
         // Загружаем фабрику модели
         var factory = GetFactory();
         
-        // Создаем процессор Whisper.net
-        // WithConditionOnPreviousText(false) спасает от затыкания на рэпе!
+        // Создаем процессор Whisper.net с оптимальными настройками для стабильной работы
+        // WithNoContext() спасает от затыкания на рэпе и бесконечных повторов.
+        // Настройки температуры, энтропии и порога тишины предотвращают затыкание/зависание (stalling) на инструментальных частях.
         using var processor = factory.CreateBuilder()
             .WithLanguage(language)
             .WithNoContext()
+            .WithTemperature(0.0f)
+            .WithTemperatureInc(0.2f)
+            .WithEntropyThreshold(2.4f)
+            .WithLogProbThreshold(-1.5f)
+            .WithNoSpeechThreshold(0.6f)
             .Build();
 
         onProgress?.Invoke(30);
@@ -89,14 +133,14 @@ public class WhisperRecognizer : ISpeechRecognizer
 
         var alignedWords = new List<WordTimeInfo>();
 
-        // Запускаем распознавание сегментов Whisper.net
-        using var wavStream = File.OpenRead(wavPath);
-        
+        // Запускаем распознавание сегментов Whisper.net напрямую по сэмплам в памяти
         var segments = new List<(string Text, TimeSpan Start, TimeSpan End)>();
-        await foreach (var segment in processor.ProcessAsync(wavStream))
+        Console.WriteLine($"[Whisper DEBUG] Starting audio transcription of {wavPath} via samples directly...");
+        await foreach (var segment in processor.ProcessAsync(allSamples))
         {
             if (!string.IsNullOrWhiteSpace(segment.Text))
             {
+                Console.WriteLine($"[Whisper DEBUG] Raw Segment: [{segment.Start} -> {segment.End}] -> '{segment.Text}'");
                 segments.Add((segment.Text, segment.Start, segment.End));
             }
         }
@@ -104,7 +148,12 @@ public class WhisperRecognizer : ISpeechRecognizer
         // Apply Gemini lyrics correction if API key is provided
         if (!string.IsNullOrEmpty(geminiApiKey))
         {
+            Console.WriteLine($"[Whisper DEBUG] Applying Gemini correction. Segments count: {segments.Count}");
             segments = await ImproveSegmentsWithGeminiAsync(segments, geminiApiKey, trackName);
+            foreach (var segment in segments)
+            {
+                Console.WriteLine($"[Whisper DEBUG] Post-Gemini Segment: [{segment.Start} -> {segment.End}] -> '{segment.Text}'");
+            }
         }
 
         onProgress?.Invoke(75);

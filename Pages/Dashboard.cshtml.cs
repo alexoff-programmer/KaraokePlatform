@@ -68,7 +68,7 @@ public class DashboardModel : PageModel
     public string SelectedLanguage { get; set; } = "auto";
 
     [BindProperty]
-    public string SelectedQuality { get; set; } = "medium";
+    public string SelectedQuality { get; set; } = "high";
 
     [BindProperty]
     public IFormFile? UploadedBackground { get; set; }

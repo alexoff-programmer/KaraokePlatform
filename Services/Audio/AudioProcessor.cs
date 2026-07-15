@@ -17,6 +17,8 @@ public class AudioProcessor : IAudioProcessor
         _environment = environment;
     }
 
+    private static readonly System.Text.RegularExpressions.Regex ProgressRegex = new System.Text.RegularExpressions.Regex(@"(\d+)(?:.\d+)?%", System.Text.RegularExpressions.RegexOptions.Compiled);
+
     public void ConvertAndFilterMp3ToWav(
         string inputPath, 
         string outputPath, 
@@ -27,84 +29,77 @@ public class AudioProcessor : IAudioProcessor
         string tempOutputDir = Path.Combine(Path.GetTempPath(), "KaraokeTemp", $"sep_{Guid.NewGuid()}");
         Directory.CreateDirectory(tempOutputDir);
 
-        string tempStereoWav = Path.Combine(tempOutputDir, "input_stereo.wav");
-        string absoluteModelPath = Path.Combine(_environment.ContentRootPath, "Models", "audio_models", "Kim_Vocal_2.onnx");
-
         try
         {
             onProgress?.Invoke(5); // Подготовка
             
-            // 1. Предварительно декодируем/конвертируем входной файл в 44100Hz stereo WAV
-            PreConvertAudioToStereo44100Wav(inputPath, tempStereoWav);
-            onProgress?.Invoke(10);
+            string modelName = "model_bs_roformer_ep_317_sdr_12.9755.ckpt";
+            string modelFileDir = Path.Combine(_environment.ContentRootPath, "Models", "audio_models");
+            string modelArgs = "--mdxc_overlap 8";
 
-            // 2. Инициализируем и запускаем разделение вокала на C# через ONNX Runtime
-            SimpleAudioSeparationService? separator = null;
-            try
-            {
-                if (quality.Equals("high", StringComparison.OrdinalIgnoreCase))
-                {
-                    var options = new SimpleSeparationOptions
-                    {
-                        Model = InternalModel.Best,
-                        OutputDirectory = tempOutputDir,
-                        EnableGPU = false
-                    };
-                    separator = new SimpleAudioSeparationService(options);
-                    separator.Initialize();
-                }
-            }
-            catch
-            {
-                // Откат на локальную Kim_Vocal_2, если оффлайн или ошибка скачивания
-                separator?.Dispose();
-                separator = null;
-            }
+            var arguments = $"\"{inputPath}\" -m {modelName} --model_file_dir \"{modelFileDir}\" {modelArgs} --output_dir \"{tempOutputDir}\" --output_format WAV";
 
-            if (separator == null)
+            var startInfo = new ProcessStartInfo
             {
-                var options = new SimpleSeparationOptions
-                {
-                    ModelPath = absoluteModelPath,
-                    OutputDirectory = tempOutputDir,
-                    NFft = 7680,
-                    DimF = 3072,
-                    DimT = 8,
-                    EnableGPU = false
-                };
-                separator = new SimpleAudioSeparationService(options);
-                separator.Initialize();
-            }
+                FileName = "audio-separator",
+                Arguments = arguments,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
 
-            using (separator)
+            using var process = new Process();
+            process.StartInfo = startInfo;
+            var stderrBuilder = new System.Text.StringBuilder();
+
+            process.ErrorDataReceived += (sender, args) =>
             {
+                if (args.Data == null) return;
+                stderrBuilder.AppendLine(args.Data);
+
                 if (onProgress != null)
                 {
-                    separator.ProgressChanged += (sender, progress) =>
+                    var match = ProgressRegex.Match(args.Data);
+                    if (match.Success && int.TryParse(match.Groups[1].Value, out int percent))
                     {
-                        // Масштабируем внутренний прогресс в диапазон 10-25% общего прогресса
-                        int overallPercent = 10 + (int)(progress.OverallProgress * 15 / 100);
+                        int overallPercent = 5 + (percent * 20) / 100;
                         onProgress.Invoke(overallPercent);
-                    };
+                    }
                 }
+            };
 
-                var result = separator.Separate(tempStereoWav);
+            process.Start();
+            process.BeginErrorReadLine();
+            process.WaitForExit();
 
-                onProgress?.Invoke(25);
-
-                // 3. Валидируем результаты разделения
-                if (!File.Exists(result.VocalsPath) || !File.Exists(result.InstrumentalPath))
-                {
-                    throw new FileNotFoundException("Файлы после разделения вокала не были созданы разделяющим сервисом.");
-                }
-
-                // 4. Перемещаем чистую минусовку (инструментал) в конечное место
-                if (File.Exists(instrumentalOutputPath)) File.Delete(instrumentalOutputPath);
-                File.Move(result.InstrumentalPath, instrumentalOutputPath);
-
-                // 5. Пережимаем вокал в моно 16кГц с фильтрацией для Whisper
-                DownsampleToWhisperFormat(result.VocalsPath, outputPath);
+            if (process.ExitCode != 0)
+            {
+                throw new Exception($"ИИ-разделение аудио через audio-separator завершилось с ошибкой (Код {process.ExitCode}): {stderrBuilder}");
             }
+
+            onProgress?.Invoke(25);
+
+            string inputFileNameNoExt = Path.GetFileNameWithoutExtension(inputPath);
+            var outputDirInfo = new DirectoryInfo(tempOutputDir);
+
+            var vocalsFile = outputDirInfo.GetFiles($"*{inputFileNameNoExt}*(Vocals)*.wav").FirstOrDefault();
+            var instrumentalFile = outputDirInfo.GetFiles($"*{inputFileNameNoExt}*(Instrumental)*.wav").FirstOrDefault();
+
+            if (vocalsFile == null || !vocalsFile.Exists)
+            {
+                throw new FileNotFoundException($"Файл вокала не найден в папке {tempOutputDir}. Лог утилиты: {stderrBuilder}");
+            }
+            if (instrumentalFile == null || !instrumentalFile.Exists)
+            {
+                throw new FileNotFoundException($"Файл инструментала (минусовки) не найден в папке {tempOutputDir}. Лог утилиты: {stderrBuilder}");
+            }
+
+            // Перемещаем чистую минусовку в её постоянное место
+            if (File.Exists(instrumentalOutputPath)) File.Delete(instrumentalOutputPath);
+            File.Move(instrumentalFile.FullName, instrumentalOutputPath);
+
+            // Пережимаем в Моно 16кГц для Whisper
+            DownsampleToWhisperFormat(vocalsFile.FullName, outputPath);
         }
         finally
         {

@@ -36,9 +36,8 @@ COPY --from=build-env /app .
 # Создаем папки для хранения данных
 RUN mkdir -p instance wwwroot/uploads wwwroot/uploads/backgrounds wwwroot/output Models Fonts
 
-# Создаем папку под модели и копируем файл Kim_Vocal_2.onnx внутрь образа
+# Создаем папку под модели
 RUN mkdir -p Models/audio_models
-COPY ./Models/audio_models/Kim_Vocal_2.onnx Models/audio_models/Kim_Vocal_2.onnx
 
 # Открываем порты для веб-сервера
 EXPOSE 8080
