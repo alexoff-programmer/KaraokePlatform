@@ -171,7 +171,7 @@ public class AudioProcessor : IAudioProcessor
         }
     }
 
-    public float[] SliceSamples(float[] samples, ref TimeSpan start, TimeSpan end)
+    public float[] SliceSamples(float[] samples, ref TimeSpan start, TimeSpan end, bool trimSilence = false)
     {
         int startIndex = (int)(start.TotalSeconds * 16000);
         int endIndex = (int)(end.TotalSeconds * 16000);
@@ -183,6 +183,11 @@ public class AudioProcessor : IAudioProcessor
         int segmentLength = endIndex - startIndex;
         var segmentSamples = new float[segmentLength];
         Array.Copy(samples, startIndex, segmentSamples, 0, segmentLength);
+
+        if (!trimSilence)
+        {
+            return segmentSamples;
+        }
 
         // Find silent start duration using 20ms frames and noise-gating
         int frameSize = 320;

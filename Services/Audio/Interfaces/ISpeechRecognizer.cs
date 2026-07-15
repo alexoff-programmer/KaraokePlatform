@@ -11,5 +11,6 @@ public interface ISpeechRecognizer
         string language,
         Action<int> onProgress,
         string? geminiApiKey = null,
-        string? trackName = null);
+        string? trackName = null,
+        List<AudioInterval>? vadIntervals = null);
 }

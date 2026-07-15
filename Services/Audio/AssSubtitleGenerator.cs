@@ -11,7 +11,7 @@ namespace KaraokePlatform.Services.Audio;
 
 public class AssSubtitleGenerator : ISubtitleGenerator
 {
-    private static readonly TimeSpan TimeShift = TimeSpan.FromMilliseconds(200);
+    private static readonly TimeSpan TimeShift = TimeSpan.Zero;
     private const double InstrumentSilenceThresholdMs = 1200;
 
     private int FadeTimeMs = 150;
@@ -471,6 +471,7 @@ public class AssSubtitleGenerator : ISubtitleGenerator
 
         var cleanWords = words.Select(w => w with { }).ToList();
 
+        // 1. Убеждаемся, что каждое слово имеет положительную длительность
         for (int i = 0; i < cleanWords.Count; i++)
         {
             if (cleanWords[i].End <= cleanWords[i].Start)
@@ -479,57 +480,24 @@ public class AssSubtitleGenerator : ISubtitleGenerator
             }
         }
 
-        int idx = 0;
-        while (idx < cleanWords.Count)
-        {
-            int startIdx = idx;
-            TimeSpan maxTime = cleanWords[idx].End;
-            int endIdx = idx;
-
-            while (endIdx + 1 < cleanWords.Count && cleanWords[endIdx + 1].Start < maxTime)
-            {
-                endIdx++;
-                if (cleanWords[endIdx].End > maxTime) maxTime = cleanWords[endIdx].End;
-            }
-
-            if (endIdx > startIdx)
-            {
-                TimeSpan totalSpanStart = cleanWords[startIdx].Start;
-                TimeSpan totalSpanEnd = maxTime;
-                double totalDurationMs = (totalSpanEnd - totalSpanStart).TotalMilliseconds;
-
-                double totalLength = 0;
-                for (int i = startIdx; i <= endIdx; i++)
-                {
-                    totalLength += Math.Max(1, cleanWords[i].Text.Length);
-                }
-
-                double elapsedMs = 0;
-                for (int i = startIdx; i <= endIdx; i++)
-                {
-                    double wordLen = Math.Max(1, cleanWords[i].Text.Length);
-                    double wordDurationMs = (wordLen / totalLength) * totalDurationMs;
-
-                    if (wordDurationMs < 100) wordDurationMs = 100;
-
-                    cleanWords[i].Start = totalSpanStart.Add(TimeSpan.FromMilliseconds(elapsedMs));
-                    cleanWords[i].End = cleanWords[i].Start.Add(TimeSpan.FromMilliseconds(wordDurationMs));
-
-                    elapsedMs += wordDurationMs;
-                }
-            }
-
-            idx = endIdx + 1;
-        }
-
+        // 2. Устраняем наложения без перераспределения:
+        // Если следующее слово начинается раньше, чем заканчивается предыдущее,
+        // сдвигаем конец предыдущего слова на начало следующего.
         for (int i = 1; i < cleanWords.Count; i++)
         {
             if (cleanWords[i].Start < cleanWords[i - 1].End)
             {
-                cleanWords[i].Start = cleanWords[i - 1].End;
-                if (cleanWords[i].End <= cleanWords[i].Start)
+                if (cleanWords[i].Start > cleanWords[i - 1].Start)
                 {
-                    cleanWords[i].End = cleanWords[i].Start.Add(TimeSpan.FromMilliseconds(150));
+                    cleanWords[i - 1].End = cleanWords[i].Start;
+                }
+                else
+                {
+                    cleanWords[i].Start = cleanWords[i - 1].End;
+                    if (cleanWords[i].End <= cleanWords[i].Start)
+                    {
+                        cleanWords[i].End = cleanWords[i].Start.Add(TimeSpan.FromMilliseconds(150));
+                    }
                 }
             }
         }

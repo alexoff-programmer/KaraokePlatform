@@ -67,9 +67,13 @@ public class WhisperRecognizer : ISpeechRecognizer
             Directory.CreateDirectory(dir);
         }
 
-        Console.WriteLine($"[Whisper] Model not found at {_modelPath}. Downloading LargeV3 model...");
+        var modelName = Path.GetFileName(_modelPath);
+        var isMedium = modelName.Contains("medium");
+        Console.WriteLine($"[Whisper] Model not found at {_modelPath}. Downloading {(isMedium ? "Medium" : "LargeV3 Turbo")} model...");
 
-        var downloadUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin";
+        var downloadUrl = isMedium 
+            ? "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin"
+            : "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin";
         try
         {
             using var client = new HttpClient();
@@ -79,7 +83,7 @@ public class WhisperRecognizer : ISpeechRecognizer
             using var stream = await response.Content.ReadAsStreamAsync();
             using var fileStream = new FileStream(_modelPath, FileMode.Create, FileAccess.Write, FileShare.None);
             await stream.CopyToAsync(fileStream);
-            Console.WriteLine($"[Whisper] Model LargeV3 successfully downloaded to {_modelPath}");
+            Console.WriteLine($"[Whisper] Model {(isMedium ? "Medium" : "LargeV3 Turbo")} successfully downloaded to {_modelPath}");
         }
         catch (Exception ex)
         {
@@ -93,7 +97,8 @@ public class WhisperRecognizer : ISpeechRecognizer
         string language,
         Action<int> onProgress,
         string? geminiApiKey = null,
-        string? trackName = null)
+        string? trackName = null,
+        List<AudioInterval>? vadIntervals = null)
     {
         if (!File.Exists(wavPath))
             throw new FileNotFoundException("Аудиофайл для транскрибации не найден", wavPath);
@@ -106,17 +111,15 @@ public class WhisperRecognizer : ISpeechRecognizer
         // Загружаем фабрику модели
         var factory = GetFactory();
         
-        // Создаем процессор Whisper.net с оптимальными настройками для стабильной работы
-        // WithNoContext() спасает от затыкания на рэпе и бесконечных повторов.
-        // Настройки температуры, энтропии и порога тишины предотвращают затыкание/зависание (stalling) на инструментальных частях.
-        using var processor = factory.CreateBuilder()
+        var processorBuilder = factory.CreateBuilder()
             .WithLanguage(language)
-            .WithNoContext()
-            .WithTemperature(0.0f)
-            .WithTemperatureInc(0.2f)
+            .WithNoContext();
+
+
+        using var processor = processorBuilder
             .WithEntropyThreshold(2.4f)
-            .WithLogProbThreshold(-1.5f)
-            .WithNoSpeechThreshold(0.6f)
+            .WithLogProbThreshold(-2.0f) // Смягчаем порог уверенности для песенного вокала
+            .WithNoSpeechThreshold(0.8f) // Позволяем дольше обрабатывать тихие фрагменты внутри фраз
             .Build();
 
         onProgress?.Invoke(30);
@@ -132,18 +135,54 @@ public class WhisperRecognizer : ISpeechRecognizer
         onProgress?.Invoke(50);
 
         var alignedWords = new List<WordTimeInfo>();
-
-        // Запускаем распознавание сегментов Whisper.net напрямую по сэмплам в памяти
         var segments = new List<(string Text, TimeSpan Start, TimeSpan End)>();
-        Console.WriteLine($"[Whisper DEBUG] Starting audio transcription of {wavPath} via samples directly...");
-        await foreach (var segment in processor.ProcessAsync(allSamples))
+
+        // ======================================================================
+        // ЛОГИКА НАВЕДЕНИЯ WHISPER СТРОГО НА VAD-ОТРЕЗКИ
+        // ======================================================================
+        if (vadIntervals != null && vadIntervals.Count > 0)
         {
-            if (!string.IsNullOrWhiteSpace(segment.Text))
+            Console.WriteLine($"[Whisper DEBUG] Starting audio transcription via VAD segments ({vadIntervals.Count} intervals)...");
+            
+            foreach (var interval in vadIntervals)
             {
-                Console.WriteLine($"[Whisper DEBUG] Raw Segment: [{segment.Start} -> {segment.End}] -> '{segment.Text}'");
-                segments.Add((segment.Text, segment.Start, segment.End));
+                var segmentStart = interval.Start;
+                var segmentEnd = interval.End;
+
+                // Нарезаем сэмплы под конкретный кусок речи, определенный Silero VAD
+                var chunkSamples = _audioProcessor.SliceSamples(allSamples, ref segmentStart, segmentEnd);
+                if (chunkSamples.Length == 0) continue;
+
+                // Отправляем в Whisper только этот кусочек данных
+                await foreach (var segment in processor.ProcessAsync(chunkSamples))
+                {
+                    if (!string.IsNullOrWhiteSpace(segment.Text))
+                    {
+                        // ВАЖНО: Время сегмента возвращается относительно начала нарезки (с нуля).
+                        // Прибавляем реальное смещение начала куска (segmentStart), чтобы восстановить абсолютное время в песне.
+                        var absoluteStart = segmentStart.Add(segment.Start);
+                        var absoluteEnd = segmentStart.Add(segment.End);
+
+                        Console.WriteLine($"[Whisper DEBUG] VAD Segment Raw: [{absoluteStart} -> {absoluteEnd}] -> '{segment.Text}'");
+                        segments.Add((segment.Text, absoluteStart, absoluteEnd));
+                    }
+                }
             }
         }
+        else
+        {
+            // Резервный фолбэк: если VAD пустой или не передался, обрабатываем массив целиком
+            Console.WriteLine($"[Whisper DEBUG] VAD intervals empty. Transcribing whole file via samples directly...");
+            await foreach (var segment in processor.ProcessAsync(allSamples))
+            {
+                if (!string.IsNullOrWhiteSpace(segment.Text))
+                {
+                    Console.WriteLine($"[Whisper DEBUG] Raw Segment: [{segment.Start} -> {segment.End}] -> '{segment.Text}'");
+                    segments.Add((segment.Text, segment.Start, segment.End));
+                }
+            }
+        }
+        // ======================================================================
 
         // Apply Gemini lyrics correction if API key is provided
         if (!string.IsNullOrEmpty(geminiApiKey))
