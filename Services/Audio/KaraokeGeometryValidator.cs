@@ -26,38 +26,23 @@ public static class KaraokeGeometryValidator
             }
         }
 
-        // 2. Proportional interpolation if there are overlaps, zero durations, or rapid rapping
-        bool needsInterpolation = false;
+        // 2. Softly adjust boundaries if there are overlaps
         for (int i = 1; i < cleanWords.Count; i++)
         {
             if (cleanWords[i].Start < cleanWords[i - 1].End)
             {
-                needsInterpolation = true;
-                break;
-            }
-        }
-
-        if (needsInterpolation)
-        {
-            double totalChars = cleanWords.Sum(w => w.Text.Length);
-            if (totalChars > 0)
-            {
-                TimeSpan totalSpanStart = cleanWords.First().Start;
-                TimeSpan totalSpanEnd = phraseEnd;
-                double totalDurationMs = (totalSpanEnd - totalSpanStart).TotalMilliseconds;
-                
-                double elapsedMs = 0;
-                for (int i = 0; i < cleanWords.Count; i++)
+                if (cleanWords[i].Start > cleanWords[i - 1].Start)
                 {
-                    double wordLen = cleanWords[i].Text.Length;
-                    double wordDurationMs = (wordLen / totalChars) * totalDurationMs;
-                    
-                    if (wordDurationMs < 100) wordDurationMs = 100;
-                    
-                    cleanWords[i].Start = totalSpanStart.Add(TimeSpan.FromMilliseconds(elapsedMs));
-                    cleanWords[i].End = cleanWords[i].Start.Add(TimeSpan.FromMilliseconds(wordDurationMs));
-                    
-                    elapsedMs += wordDurationMs;
+                    // Просто сдвигаем конец предыдущего слова на начало текущего
+                    cleanWords[i - 1].End = cleanWords[i].Start;
+                }
+                else
+                {
+                    cleanWords[i].Start = cleanWords[i - 1].End;
+                    if (cleanWords[i].End <= cleanWords[i].Start)
+                    {
+                        cleanWords[i].End = cleanWords[i].Start.Add(TimeSpan.FromMilliseconds(100));
+                    }
                 }
             }
         }

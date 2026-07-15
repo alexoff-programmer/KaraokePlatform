@@ -251,17 +251,8 @@ public class MmsForceAligner
         {
             var newBeams = new Dictionary<int, (float score, int[] path)>();
 
-            int activeFrames = activeFramesUpTo[t];
-            double progress = totalActiveFrames > 0 ? (double)activeFrames / totalActiveFrames : (double)t / T;
-            int idealCharIdx = (int)(progress * N);
-
             foreach (var (state, prevScore, prevPath) in beams)
             {
-                // Расширенный диапазон поиска (±80 вместо ±10) предотвращает срез путей при неравномерном темпе
-                if (state < idealCharIdx - 80 || state > idealCharIdx + 80)
-                {
-                    continue;
-                }
 
                 // Вариант 1: ОСТАЁМСЯ на текущем токене (stay)
                 float stayScore = prevScore + GetBoostedLogProb(logProbs, t, tokenIds[state], state, tokenIds);
