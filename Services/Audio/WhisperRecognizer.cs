@@ -142,28 +142,62 @@ public class WhisperRecognizer : ISpeechRecognizer
         // ======================================================================
         if (vadIntervals != null && vadIntervals.Count > 0)
         {
-            Console.WriteLine($"[Whisper DEBUG] Starting audio transcription via VAD segments ({vadIntervals.Count} intervals)...");
+            Console.WriteLine($"[Whisper DEBUG] Raw VAD intervals count: {vadIntervals.Count}");
             
-            foreach (var interval in vadIntervals)
+            // --- НАЧАЛО ФИКСА: Объединяем микро-интервалы в крупные макро-блоки (Куплеты / Припевы) ---
+            var macroIntervals = new List<AudioInterval>();
+            var sortedIntervals = vadIntervals.OrderBy(v => v.Start).ToList();
+            
+            var currentMacro = sortedIntervals[0];
+            double maxGapToMergeSeconds = 4.0; // Паузы меньше 4 секунд (дыхание, короткие проигрыши) игнорируются
+
+            for (int i = 1; i < sortedIntervals.Count; i++)
+            {
+                var nextInterval = sortedIntervals[i];
+                
+                // Если расстояние между концом текущего макро-блока и началом следующего меньше порога
+                if ((nextInterval.Start - currentMacro.End).TotalSeconds < maxGapToMergeSeconds)
+                {
+                    // Расширяем текущий макро-блок
+                    if (nextInterval.End > currentMacro.End)
+                    {
+                        currentMacro = new AudioInterval(currentMacro.Start, nextInterval.End);
+                    }
+                }
+                else
+                {
+                    // Пауза действительно длинная (инструментальный мост) — фиксируем старый блок и начинаем новый
+                    macroIntervals.Add(currentMacro);
+                    currentMacro = nextInterval;
+                }
+            }
+            macroIntervals.Add(currentMacro);
+            
+            // Подменяем список интервалов на укрупненные макро-блоки
+            var workingIntervals = macroIntervals;
+            Console.WriteLine($"[Whisper DEBUG] Optimized Macro-VAD intervals count: {workingIntervals.Count}");
+            // --- КОНЕЦ ФИКСА ---
+
+            // Теперь итерируемся по крупным макро-блоки workingIntervals вместо исходных vadIntervals
+            foreach (var interval in workingIntervals)
             {
                 var segmentStart = interval.Start;
                 var segmentEnd = interval.End;
 
-                // Нарезаем сэмплы под конкретный кусок речи, определенный Silero VAD
-                var chunkSamples = _audioProcessor.SliceSamples(allSamples, ref segmentStart, segmentEnd);
+                // Создаем локальную копию для SliceSamples, чтобы избежать побочных эффектов ref
+                var sliceStart = segmentStart;
+                var chunkSamples = _audioProcessor.SliceSamples(allSamples, ref sliceStart, segmentEnd);
                 if (chunkSamples.Length == 0) continue;
 
-                // Отправляем в Whisper только этот кусочек данных
                 await foreach (var segment in processor.ProcessAsync(chunkSamples))
                 {
                     if (!string.IsNullOrWhiteSpace(segment.Text))
                     {
-                        // ВАЖНО: Время сегмента возвращается относительно начала нарезки (с нуля).
-                        // Прибавляем реальное смещение начала куска (segmentStart), чтобы восстановить абсолютное время в песне.
-                        var absoluteStart = segmentStart.Add(segment.Start);
-                        var absoluteEnd = segmentStart.Add(segment.End);
+                        // Привязываем относительное время сегмента к началу нашего стабильного макро-блока sliceStart
+                        var absoluteStart = sliceStart.Add(segment.Start);
+                        var absoluteEnd = sliceStart.Add(segment.End);
 
-                        Console.WriteLine($"[Whisper DEBUG] VAD Segment Raw: [{absoluteStart} -> {absoluteEnd}] -> '{segment.Text}'");
+                        Console.WriteLine($"[Whisper DEBUG] Macro VAD Segment Raw: [{absoluteStart} -> {absoluteEnd}] -> '{segment.Text}'");
                         segments.Add((segment.Text, absoluteStart, absoluteEnd));
                     }
                 }
@@ -214,29 +248,32 @@ public class WhisperRecognizer : ISpeechRecognizer
             if (paddedEnd > TimeSpan.FromSeconds(totalDurationSec))
                 paddedEnd = TimeSpan.FromSeconds(totalDurationSec);
 
-            var segmentStart = paddedStart;
-            var segmentEnd = paddedEnd;
-            var segmentSamples = _audioProcessor.SliceSamples(allSamples, ref segmentStart, segmentEnd);
+            int sampleStart = (int)Math.Round(paddedStart.TotalSeconds * 16000.0);
+            int sampleEnd = (int)Math.Round(paddedEnd.TotalSeconds * 16000.0);
 
-            if (segmentSamples.Length == 0) continue;
+            if (sampleStart >= sampleEnd) continue;
 
-            // Выравниваем слова внутри сегмента с runwayFrames = 5
-            var segmentWords = await _forceAligner.AlignAudioAsync(segmentSamples, segment.Text, language, 5);
+            // Нормализуем текст сегмента для MMS
+            var normResult = MmsTextNormalizer.Normalize(segment.Text);
+            if (normResult.CleanWords.Count == 0) continue;
 
-            // Корректируем смещение времени относительно начала песни
-            foreach (var w in segmentWords)
+            string cleanTextForMms = normResult.NormalizedText;
+
+            // Выравниваем слова внутри сегмента без физической нарезки аудио
+            var segmentWords = await _forceAligner.AlignAudioAsync(allSamples, sampleStart, sampleEnd, cleanTextForMms, language, 0, vadIntervals);
+
+            // Сопоставляем очищенные выровненные слова с оригинальными словами
+            int wordsToMap = Math.Min(segmentWords.Count, normResult.OriginalWords.Count);
+            for (int wIdx = 0; wIdx < wordsToMap; wIdx++)
             {
-                var cleanWordText = w.Text.Trim('.', ',', '!', '?', ';', ':', '"', '\'', '`', '(', ')', '[', ']', '{', '}', '_', '*', '…', '-');
-                if (string.IsNullOrWhiteSpace(cleanWordText)) continue;
-
-                // Нормализуем ё -> е
-                cleanWordText = cleanWordText.Replace("ё", "е").Replace("Ё", "Е");
+                var alignedWord = segmentWords[wIdx];
+                var originalWordText = normResult.OriginalWords[wIdx];
 
                 alignedWords.Add(new WordTimeInfo
                 {
-                    Text = cleanWordText,
-                    Start = segmentStart.Add(w.Start),
-                    End = segmentStart.Add(w.End)
+                    Text = originalWordText,
+                    StartSample = alignedWord.StartSample,
+                    EndSample = alignedWord.EndSample
                 });
             }
 

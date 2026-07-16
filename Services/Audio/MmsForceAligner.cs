@@ -24,10 +24,10 @@ public class MmsForceAligner
     // ──────────────────────────────────────────────────────────────────
     //  BEAM SEARCH ПАРАМЕТРЫ
     // ──────────────────────────────────────────────────────────────────
-    private const int BeamWidth = 16;                 // Лучших путей одновременно
+    private const int BeamWidth = 32;                 // Лучших путей одновременно
     private const float BoostAlpha = 3.0f;            // Усиление вероятности целевого символа
     private const float BlankPenalty = 0.6f;          // Штраф за ПРОПУСК blank-токена между словами
-    private const float TransitionPenalty = 0.8f;     // Штраф за переход к следующему символу
+    private const float TransitionPenalty = 0.2f;     // Штраф за переход к следующему символу
 
     // ──────────────────────────────────────────────────────────────────
     //  АУДИО-ПРЕДОБРАБОТКА
@@ -72,23 +72,47 @@ public class MmsForceAligner
             {
                 var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
 
-                // Фикс: Ограничиваем внутренний пул потоков ONNX, чтобы не было Thread Contention
-                options.IntraOpNumThreads = 1;
-                options.InterOpNumThreads = 1;
-                options.AppendExecutionProvider_CPU();
+                try
+                {
+                    // 0 — это обычно индекс основной видеокарты (в вашем случае Radeon 780M)
+                    options.AppendExecutionProvider_DML(0);
+                    _logger.LogInformation("Сессия ONNX Runtime для MMS успешно переключена на GPU (DirectML / Radeon 780M).");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning($"Не удалось инициализировать DirectML GPU: {ex.Message}. Откат на CPU.");
+                    options.IntraOpNumThreads = 1;
+                    options.InterOpNumThreads = 1;
+                    options.AppendExecutionProvider_CPU();
+                }
 
                 _session = new InferenceSession(_modelPath, options);
-                _logger.LogInformation("Сессия ONNX Runtime для Force Aligner инициализирована.");
             }
         }
     }
 
-    public async Task<List<WordTimeInfo>> AlignAudioAsync(float[] samples, string text, string language, int runwayFrames = 0)
+    public async Task<List<WordTimeInfo>> AlignAudioAsync(
+        float[] allSamples, 
+        int sampleStart, 
+        int sampleEnd, 
+        string text, 
+        string language, 
+        int runwayFrames = 0,
+        List<AudioInterval>? vadIntervals = null)
     {
         await EnsureModelLoadedAsync();
 
-        if (string.IsNullOrWhiteSpace(text) || samples.Length == 0)
+        if (string.IsNullOrWhiteSpace(text) || allSamples == null || allSamples.Length == 0)
             return new List<WordTimeInfo>();
+
+        int segmentLength = sampleEnd - sampleStart;
+        if (segmentLength <= 0 || sampleStart < 0 || sampleStart >= allSamples.Length)
+            return new List<WordTimeInfo>();
+        if (sampleStart + segmentLength > allSamples.Length)
+            segmentLength = allSamples.Length - sampleStart;
+
+        var samples = new float[segmentLength];
+        Array.Copy(allSamples, sampleStart, samples, 0, segmentLength);
 
         var vocabDict = LoadVocabulary(language);
         int blankId = vocabDict.TryGetValue('<', out int bId) ? bId : 0;  // CTC blank token
@@ -139,23 +163,40 @@ public class MmsForceAligner
         bool[] isSilent = new bool[numFrames];
         for (int t = 0; t < numFrames; t++)
         {
-            int frameStart = t * samplesPerFrame;
-            int frameEnd = Math.Min(frameStart + samplesPerFrame, samples.Length);
-            if (frameStart >= samples.Length)
+            if (vadIntervals != null && vadIntervals.Count > 0)
             {
-                isSilent[t] = true;
-                continue;
-            }
+                // Вычисляем абсолютное время текущего фрейма в секундах
+                double frameStartSec = (sampleStart + t * samplesPerFrame) / 16000.0;
+                double frameEndSec = (sampleStart + Math.Min((t + 1) * samplesPerFrame, samples.Length)) / 16000.0;
+                double frameMidSec = (frameStartSec + frameEndSec) / 2.0;
 
-            double sumSq = 0;
-            for (int i = frameStart; i < frameEnd; i++)
+                // Проверяем, попадает ли средняя точка фрейма в любой из интервалов VAD (с запасом 150мс на границы)
+                bool inSpeech = vadIntervals.Any(v => 
+                    frameMidSec >= v.Start.TotalSeconds - 0.15 && 
+                    frameMidSec <= v.End.TotalSeconds + 0.15
+                );
+                isSilent[t] = !inSpeech;
+            }
+            else
             {
-                sumSq += samples[i] * samples[i];
-            }
-            double rms = Math.Sqrt(sumSq / (frameEnd - frameStart));
-            double rmsDb = 20 * Math.Log10(rms + 1e-10);
+                int frameStart = t * samplesPerFrame;
+                int frameEnd = Math.Min(frameStart + samplesPerFrame, samples.Length);
+                if (frameStart >= samples.Length)
+                {
+                    isSilent[t] = true;
+                    continue;
+                }
 
-            isSilent[t] = rmsDb < -25.0;
+                double sumSq = 0;
+                for (int i = frameStart; i < frameEnd; i++)
+                {
+                    sumSq += samples[i] * samples[i];
+                }
+                double rms = Math.Sqrt(sumSq / (frameEnd - frameStart));
+                double rmsDb = 20 * Math.Log10(rms + 1e-10);
+
+                isSilent[t] = rmsDb < -25.0;
+            }
         }
 
         bool[] keepNormal = new bool[numFrames];
@@ -172,32 +213,26 @@ public class MmsForceAligner
             }
         }
 
-        // [ОТКЛЮЧЕНО] Жесткая RMS-маска логитов переопределяла предсказания модели и вызывала потерю цепочки слов при тихом пении.
-        // for (int t = 0; t < numFrames; t++)
-        // {
-        //     if (!keepNormal[t])
-        //     {
-        //         for (int v = 0; v < vocabSize; v++)
-        //         {
-        //             if (v == blankId)
-        //                 logProbs[t, v] = 0.0f;
-        //             else
-        //                 logProbs[t, v] = -100.0f;
-        //         }
-        //     }
-        // }
+        // Применяем маскирование: в тишине/шуме зануляем вероятности всех символов, оставляя только blank
+        for (int t = 0; t < numFrames; t++)
+        {
+            if (!keepNormal[t])
+            {
+                for (int v = 0; v < vocabSize; v++)
+                {
+                    if (v == blankId)
+                        logProbs[t, v] = 0.0f;
+                    else
+                        logProbs[t, v] = -100.0f;
+                }
+            }
+        }
 
-        // Двунаправленное выравнивание с передачей локального контекста токенов
-        _logger.LogDebug("[Aligner] Запуск прямого прохода Beam Search (T={T}, N={N})...", T, N);
+        // Прямой проход Beam Search (T={T}, N={N})
+        _logger.LogDebug("[Aligner] Запуск Beam Search (T={T}, N={N})...", T, N);
         var (fwdPath, fwdScore) = BeamSearchAlign(logProbs, tokenIds, blankId, isSilent, localTokens, vocabDict);
 
-        _logger.LogDebug("[Aligner] Запуск обратного прохода Beam Search...");
-        bool[] isSilentRev = isSilent.Reverse().ToArray();
-        var (bwdPathRev, _) = BeamSearchAlign(ReverseLogProbs(logProbs), ReverseTokens(tokenIds), blankId, isSilentRev, localTokens, vocabDict);
-        var bwdPath = ReversePath(bwdPathRev, N);
-
-        // Сшиваем два пути
-        var mergedPath = MergePaths(fwdPath, bwdPath, N, T);
+        var mergedPath = fwdPath;
 
         // Определяем границы символов
         var (charStartFrames, charEndFrames) = ExtractCharFrames(mergedPath, N, T);
@@ -223,7 +258,7 @@ public class MmsForceAligner
         }
 
         // Группировка символов в слова
-        return BuildWordTimings(words, charStartFrames, charEndFrames, firstValidFrame, lastValidFrame);
+        return BuildWordTimings(words, charStartFrames, charEndFrames, firstValidFrame, lastValidFrame, sampleStart);
     }
 
     private (int[] path, float score) BeamSearchAlign(
@@ -244,8 +279,19 @@ public class MmsForceAligner
         }
 
         var beams = new List<(int state, float score, int[] path)>();
-        var initialPath = Enumerable.Repeat(-1, T).ToArray();
-        beams.Add((0, logProbs[0, tokenIds[0]], initialPath));
+        
+        // Вариант А: Начинаем сразу с первого токена
+        var initialPathToken = Enumerable.Repeat(-1, T).ToArray();
+        initialPathToken[0] = 0;
+        beams.Add((0, logProbs[0, tokenIds[0]], initialPathToken));
+
+        // Вариант Б: Начинаем с blank (молчание)
+        if (blankId >= 0)
+        {
+            var initialPathBlank = Enumerable.Repeat(-1, T).ToArray();
+            initialPathBlank[0] = -1;
+            beams.Add((0, logProbs[0, blankId], initialPathBlank));
+        }
 
         for (int t = 1; t < T; t++)
         {
@@ -266,7 +312,23 @@ public class MmsForceAligner
                     bool isDuplicate = tokenIds[state] == nextToken;
                     bool prevWasBlank = prevPath[t - 1] == -1;
 
-                    if (!isDuplicate || prevWasBlank)
+                    // Если мы на первом состоянии (state = 0), мы можем перейти на следующее состояние
+                    // только если мы хотя бы один раз выделили первый токен (т.е. вышли из начального молчания)
+                    bool canAdvance = true;
+                    if (state == 0)
+                    {
+                        canAdvance = false;
+                        for (int i = 0; i < t; i++)
+                        {
+                            if (prevPath[i] == 0)
+                            {
+                                canAdvance = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (canAdvance && (!isDuplicate || prevWasBlank))
                     {
                         float advanceBoost = GetBoostedLogProb(logProbs, t, nextToken, state + 1, tokenIds);
 
@@ -309,7 +371,7 @@ public class MmsForceAligner
         if (beams.Count == 0)
             return (Enumerable.Repeat(-1, T).ToArray(), float.NegativeInfinity);
 
-        var best = beams.OrderByDescending(b => b.score).First();
+        var best = beams.OrderByDescending(b => b.state).ThenByDescending(b => b.score).First();
         return (best.path, best.score);
     }
 
@@ -515,7 +577,7 @@ public class MmsForceAligner
     }
 
     private List<WordTimeInfo> BuildWordTimings(
-        List<string> words, int[] charStartFrames, int[] charEndFrames, int firstValidFrame, int lastValidFrame)
+        List<string> words, int[] charStartFrames, int[] charEndFrames, int firstValidFrame, int lastValidFrame, int sampleStart)
     {
         var result = new List<WordTimeInfo>();
         int firstCharIdx = 0;
@@ -542,12 +604,17 @@ public class MmsForceAligner
                 }
             }
 
-            var start = TimeSpan.FromMilliseconds(startFrame * 20);
-            var end = TimeSpan.FromMilliseconds(endFrame * 20);
+            int wStartSample = sampleStart + startFrame * 320;
+            int wEndSample = sampleStart + (endFrame + 1) * 320;
 
-            if (end <= start) end = start.Add(TimeSpan.FromMilliseconds(100));
+            if (wEndSample <= wStartSample) wEndSample = wStartSample + 1600;
 
-            result.Add(new WordTimeInfo { Text = words[wIdx], Start = start, End = end });
+            result.Add(new WordTimeInfo
+            {
+                Text = words[wIdx],
+                StartSample = wStartSample,
+                EndSample = wEndSample
+            });
 
             firstCharIdx += wordLen + 1;
         }

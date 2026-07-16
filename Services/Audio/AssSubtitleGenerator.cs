@@ -177,11 +177,12 @@ public class AssSubtitleGenerator : ISubtitleGenerator
                 if (shiftedWordStart < TimeSpan.Zero) shiftedWordStart = TimeSpan.Zero;
                 if (shiftedWordEnd < shiftedWordStart) shiftedWordEnd = shiftedWordStart;
 
+                // Мягкое ограничение старта без изменения длительности слова!
                 if (shiftedWordStart < currentTime)
                 {
-                    var overlap = currentTime - shiftedWordStart;
                     shiftedWordStart = currentTime;
-                    shiftedWordEnd += overlap;
+                    if (shiftedWordEnd < shiftedWordStart) 
+                        shiftedWordEnd = shiftedWordStart.Add(TimeSpan.FromMilliseconds(50));
                 }
 
                 var pauseDuration = shiftedWordStart - currentTime;
@@ -261,11 +262,12 @@ public class AssSubtitleGenerator : ISubtitleGenerator
                 if (shiftedWordStart < TimeSpan.Zero) shiftedWordStart = TimeSpan.Zero;
                 if (shiftedWordEnd < shiftedWordStart) shiftedWordEnd = shiftedWordStart;
 
+                // Мягкое ограничение старта без изменения длительности слова!
                 if (shiftedWordStart < currentTime)
                 {
-                    var overlap = currentTime - shiftedWordStart;
                     shiftedWordStart = currentTime;
-                    shiftedWordEnd += overlap;
+                    if (shiftedWordEnd < shiftedWordStart) 
+                        shiftedWordEnd = shiftedWordStart.Add(TimeSpan.FromMilliseconds(50));
                 }
 
                 var pauseDuration = shiftedWordStart - currentTime;

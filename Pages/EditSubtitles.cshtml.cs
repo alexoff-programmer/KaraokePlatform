@@ -273,11 +273,10 @@ public class EditSubtitlesModel : PageModel
             if (paddedEnd > TimeSpan.FromSeconds(totalDurationSec))
                 paddedEnd = TimeSpan.FromSeconds(totalDurationSec);
 
-            var sliceStart = paddedStart;
-            var sliceEnd = paddedEnd;
-            var segmentSamples = _audioProcessor.SliceSamples(allSamples, ref sliceStart, sliceEnd);
+            int sampleStart = (int)Math.Round(paddedStart.TotalSeconds * 16000.0);
+            int sampleEnd = (int)Math.Round(paddedEnd.TotalSeconds * 16000.0);
 
-            if (segmentSamples.Length == 0)
+            if (sampleStart >= sampleEnd)
             {
                 updatedPhrases.Add(oldPhraseWords);
                 continue;
@@ -285,22 +284,30 @@ public class EditSubtitlesModel : PageModel
 
             try
             {
-                // Align corrected text to audio slice
-                var segmentWords = await _forceAligner.AlignAudioAsync(segmentSamples, newTextLine, task.Language, 5);
+                var normResult = MmsTextNormalizer.Normalize(newTextLine);
+                if (normResult.CleanWords.Count == 0)
+                {
+                    updatedPhrases.Add(oldPhraseWords);
+                    continue;
+                }
+
+                string cleanTextForMms = normResult.NormalizedText;
+
+                // Align corrected text to absolute audio window
+                var segmentWords = await _forceAligner.AlignAudioAsync(allSamples, sampleStart, sampleEnd, cleanTextForMms, task.Language, 0);
 
                 var alignedWords = new List<WordTimeInfo>();
-                foreach (var w in segmentWords)
+                int wordsToMap = Math.Min(segmentWords.Count, normResult.OriginalWords.Count);
+                for (int wIdx = 0; wIdx < wordsToMap; wIdx++)
                 {
-                    var cleanWordText = w.Text.Trim('.', ',', '!', '?', ';', ':', '"', '\'', '`', '(', ')', '[', ']', '{', '}', '_', '*', '…', '-');
-                    if (string.IsNullOrWhiteSpace(cleanWordText)) continue;
-
-                    cleanWordText = cleanWordText.Replace("ё", "е").Replace("Ё", "Е");
+                    var alignedWord = segmentWords[wIdx];
+                    var originalWordText = normResult.OriginalWords[wIdx];
 
                     alignedWords.Add(new WordTimeInfo
                     {
-                        Text = cleanWordText,
-                        Start = sliceStart.Add(w.Start),
-                        End = sliceStart.Add(w.End)
+                        Text = originalWordText,
+                        StartSample = alignedWord.StartSample,
+                        EndSample = alignedWord.EndSample
                     });
                 }
 
