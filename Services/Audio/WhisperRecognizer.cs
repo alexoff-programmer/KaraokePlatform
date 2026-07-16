@@ -15,16 +15,17 @@ using Whisper.net.Ggml;
 
 namespace KaraokePlatform.Services.Audio;
 
-public class WhisperRecognizer : ISpeechRecognizer
+public class WhisperRecognizer : ISpeechRecognizer, IDisposable
 {
     private readonly string _modelPath;
     private readonly MmsForceAligner _forceAligner;
     private readonly IAudioProcessor _audioProcessor;
     private WhisperFactory? _factory;
     private readonly object _lock = new object();
+    private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(20) };
 
     public WhisperRecognizer(
-        IOptions<WhisperSettings> settings, 
+        IOptions<WhisperSettings> settings,
         IWebHostEnvironment environment,
         MmsForceAligner forceAligner,
         IAudioProcessor audioProcessor)
@@ -71,14 +72,12 @@ public class WhisperRecognizer : ISpeechRecognizer
         var isMedium = modelName.Contains("medium");
         Console.WriteLine($"[Whisper] Model not found at {_modelPath}. Downloading {(isMedium ? "Medium" : "LargeV3 Turbo")} model...");
 
-        var downloadUrl = isMedium 
+        var downloadUrl = isMedium
             ? "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin"
             : "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin";
         try
         {
-            using var client = new HttpClient();
-            client.Timeout = TimeSpan.FromMinutes(20);
-            using var response = await client.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead);
+            using var response = await _httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead);
             response.EnsureSuccessStatusCode();
             using var stream = await response.Content.ReadAsStreamAsync();
             using var fileStream = new FileStream(_modelPath, FileMode.Create, FileAccess.Write, FileShare.None);
@@ -92,7 +91,33 @@ public class WhisperRecognizer : ISpeechRecognizer
         }
     }
 
-    public async Task<List<WordTimeInfo>> TranscribeAndMergeTokensAsync(
+    public string DetectAudioLanguage(float[] allSamples)
+    {
+        try
+        {
+            var factory = GetFactory();
+            using var processor = factory.CreateBuilder()
+                .WithLanguageDetection()
+                .WithSingleSegment()
+                .Build();
+
+            // Берем первые 30 секунд (480 000 сэмплов при 16кГц)
+            int samplesToTake = Math.Min(allSamples.Length, 480000);
+            var detectSamples = new float[samplesToTake];
+            Array.Copy(allSamples, 0, detectSamples, 0, samplesToTake);
+
+            var detectedLang = processor.DetectLanguage(detectSamples);
+            Console.WriteLine($"[Whisper DetectAudioLanguage] Detected language code: '{detectedLang}'");
+            return string.IsNullOrEmpty(detectedLang) ? "en" : detectedLang;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Whisper DetectAudioLanguage] Error: {ex.Message}. Fallback to 'ru'.");
+            return "ru"; // Дефолтный фолбек
+        }
+    }
+
+    public async Task<(List<WordTimeInfo> Words, string Language)> TranscribeAndMergeTokensAsync(
         string wavPath,
         string language,
         Action<int> onProgress,
@@ -108,22 +133,6 @@ public class WhisperRecognizer : ISpeechRecognizer
         // Ensure the model is available on disk
         await EnsureModelDownloadedAsync();
 
-        // Загружаем фабрику модели
-        var factory = GetFactory();
-        
-        var processorBuilder = factory.CreateBuilder()
-            .WithLanguage(language)
-            .WithNoContext();
-
-
-        using var processor = processorBuilder
-            .WithEntropyThreshold(2.4f)
-            .WithLogProbThreshold(-2.0f) // Смягчаем порог уверенности для песенного вокала
-            .WithNoSpeechThreshold(0.8f) // Позволяем дольше обрабатывать тихие фрагменты внутри фраз
-            .Build();
-
-        onProgress?.Invoke(30);
-
         // Читаем все сэмплы из WAV-файла (требуется 16kHz, 16-bit, mono)
         float[] allSamples;
         using (var fileStream = File.OpenRead(wavPath))
@@ -132,81 +141,99 @@ public class WhisperRecognizer : ISpeechRecognizer
             allSamples = await waveParser.GetAvgSamplesAsync();
         }
 
-        onProgress?.Invoke(50);
+        string finalLanguage = language;
+        if (language.ToLower() == "auto")
+        {
+            finalLanguage = DetectAudioLanguage(allSamples);
+            Console.WriteLine($"[Whisper DEBUG] Автоопределение языка успешно: '{finalLanguage}'");
+        }
+
+        // Загружаем фабрику модели
+        var factory = GetFactory();
+
+        var processorBuilder = factory.CreateBuilder()
+            .WithLanguage(finalLanguage)
+            .WithNoContext();
+
+        processorBuilder.WithBeamSearchSamplingStrategy(beam =>
+        {
+            beam.WithBeamSize(5);
+        });
+
+        using var processor = processorBuilder
+            .WithTemperature(0.0f)
+            .WithEntropyThreshold(2.4f)
+            .WithLogProbThreshold(-1.0f) // Смягчаем порог уверенности для песенного вокала
+            .WithNoSpeechThreshold(0.6f) // Позволяем дольше обрабатывать тихие фрагменты внутри фраз
+            .Build();
+
+        onProgress?.Invoke(30);
 
         var alignedWords = new List<WordTimeInfo>();
         var segments = new List<(string Text, TimeSpan Start, TimeSpan End)>();
 
         // ======================================================================
-        // ЛОГИКА НАВЕДЕНИЯ WHISPER СТРОГО НА VAD-ОТРЕЗКИ
+        // Цикл распознавания
         // ======================================================================
         if (vadIntervals != null && vadIntervals.Count > 0)
         {
             Console.WriteLine($"[Whisper DEBUG] Raw VAD intervals count: {vadIntervals.Count}");
-            
+
             // --- НАЧАЛО ФИКСА: Объединяем микро-интервалы в крупные макро-блоки (Куплеты / Припевы) ---
             var macroIntervals = new List<AudioInterval>();
             var sortedIntervals = vadIntervals.OrderBy(v => v.Start).ToList();
-            
+
             var currentMacro = sortedIntervals[0];
             double maxGapToMergeSeconds = 4.0; // Паузы меньше 4 секунд (дыхание, короткие проигрыши) игнорируются
 
             for (int i = 1; i < sortedIntervals.Count; i++)
             {
                 var nextInterval = sortedIntervals[i];
-                
+
                 // Если расстояние между концом текущего макро-блока и началом следующего меньше порога
                 if ((nextInterval.Start - currentMacro.End).TotalSeconds < maxGapToMergeSeconds)
                 {
-                    // Расширяем текущий макро-блок
-                    if (nextInterval.End > currentMacro.End)
-                    {
-                        currentMacro = new AudioInterval(currentMacro.Start, nextInterval.End);
-                    }
+                    currentMacro = currentMacro with { End = nextInterval.End };
                 }
                 else
                 {
-                    // Пауза действительно длинная (инструментальный мост) — фиксируем старый блок и начинаем новый
                     macroIntervals.Add(currentMacro);
                     currentMacro = nextInterval;
                 }
             }
             macroIntervals.Add(currentMacro);
-            
+
             // Подменяем список интервалов на укрупненные макро-блоки
             var workingIntervals = macroIntervals;
             Console.WriteLine($"[Whisper DEBUG] Optimized Macro-VAD intervals count: {workingIntervals.Count}");
             // --- КОНЕЦ ФИКСА ---
 
-            // Теперь итерируемся по крупным макро-блоки workingIntervals вместо исходных vadIntervals
-            foreach (var interval in workingIntervals)
+            for (int idx = 0; idx < workingIntervals.Count; idx++)
             {
-                var segmentStart = interval.Start;
-                var segmentEnd = interval.End;
+                var segment = workingIntervals[idx];
+                var segmentStart = segment.Start;
+                var segmentSamples = _audioProcessor.SliceSamples(allSamples, ref segmentStart, segment.End);
 
-                // Создаем локальную копию для SliceSamples, чтобы избежать побочных эффектов ref
-                var sliceStart = segmentStart;
-                var chunkSamples = _audioProcessor.SliceSamples(allSamples, ref sliceStart, segmentEnd);
-                if (chunkSamples.Length == 0) continue;
+                if (segmentSamples.Length == 0) continue;
 
-                await foreach (var segment in processor.ProcessAsync(chunkSamples))
+                await foreach (var segmentData in processor.ProcessAsync(segmentSamples))
                 {
-                    if (!string.IsNullOrWhiteSpace(segment.Text))
-                    {
-                        // Привязываем относительное время сегмента к началу нашего стабильного макро-блока sliceStart
-                        var absoluteStart = sliceStart.Add(segment.Start);
-                        var absoluteEnd = sliceStart.Add(segment.End);
+                    if (string.IsNullOrWhiteSpace(segmentData.Text)) continue;
 
-                        Console.WriteLine($"[Whisper DEBUG] Macro VAD Segment Raw: [{absoluteStart} -> {absoluteEnd}] -> '{segment.Text}'");
-                        segments.Add((segment.Text, absoluteStart, absoluteEnd));
-                    }
+                    var absStart = segment.Start + segmentData.Start;
+                    var absEnd = segment.Start + segmentData.End;
+
+                    Console.WriteLine($"[Whisper DEBUG] VAD Segment: [{absStart} -> {absEnd}] -> '{segmentData.Text}'");
+                    segments.Add((segmentData.Text, absStart, absEnd));
                 }
+
+                int currentProgress = 30 + (idx * 45 / workingIntervals.Count);
+                onProgress?.Invoke(currentProgress);
             }
         }
         else
         {
-            // Резервный фолбэк: если VAD пустой или не передался, обрабатываем массив целиком
-            Console.WriteLine($"[Whisper DEBUG] VAD intervals empty. Transcribing whole file via samples directly...");
+            Console.WriteLine("[Whisper DEBUG] No VAD intervals provided. Running on full audio.");
             await foreach (var segment in processor.ProcessAsync(allSamples))
             {
                 if (!string.IsNullOrWhiteSpace(segment.Text))
@@ -260,7 +287,7 @@ public class WhisperRecognizer : ISpeechRecognizer
             string cleanTextForMms = normResult.NormalizedText;
 
             // Выравниваем слова внутри сегмента без физической нарезки аудио
-            var segmentWords = await _forceAligner.AlignAudioAsync(allSamples, sampleStart, sampleEnd, cleanTextForMms, language, 0, vadIntervals);
+            var segmentWords = await _forceAligner.AlignAudioAsync(allSamples, sampleStart, sampleEnd, cleanTextForMms, finalLanguage, 0, vadIntervals);
 
             // Сопоставляем очищенные выровненные слова с оригинальными словами
             int wordsToMap = Math.Min(segmentWords.Count, normResult.OriginalWords.Count);
@@ -283,7 +310,7 @@ public class WhisperRecognizer : ISpeechRecognizer
         }
 
         onProgress?.Invoke(100);
-        return alignedWords;
+        return (alignedWords, finalLanguage);
     }
 
     public async Task<List<(string Text, TimeSpan Start, TimeSpan End)>> ImproveSegmentsWithGeminiAsync(
@@ -338,7 +365,7 @@ public class WhisperRecognizer : ISpeechRecognizer
 
             // Call Gemini 3.1 Flash-Lite (standard fast model with JSON mode support)
             var url = $"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key={apiKey}";
-            
+
             var response = await httpClient.PostAsync(url, content);
             if (!response.IsSuccessStatusCode)
             {
@@ -347,7 +374,7 @@ public class WhisperRecognizer : ISpeechRecognizer
             }
 
             var responseJson = await response.Content.ReadAsStringAsync();
-            
+
             using var doc = JsonDocument.Parse(responseJson);
             var candidates = doc.RootElement.GetProperty("candidates");
             if (candidates.ValueKind == JsonValueKind.Array && candidates.GetArrayLength() > 0)
@@ -387,6 +414,15 @@ public class WhisperRecognizer : ISpeechRecognizer
         {
             Console.WriteLine($"[Gemini Lyrics Correction Error] {ex.Message}. Falling back to raw Whisper segments.");
             return segments;
+        }
+    }
+
+    public void Dispose()
+    {
+        lock (_lock)
+        {
+            _factory?.Dispose();
+            _factory = null;
         }
     }
 }

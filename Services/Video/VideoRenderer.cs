@@ -63,7 +63,7 @@ public class VideoRenderer
         {
             FileName = "ffmpeg",
             Arguments = arguments,
-            RedirectStandardOutput = true,
+            RedirectStandardOutput = false,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true
@@ -99,7 +99,7 @@ public class VideoRenderer
             // v error глушит лишние логи, show_entries вытаскивает только длительность, of default убирает лишнюю разметку
             Arguments = $"-v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"{audioPath}\"",
             RedirectStandardOutput = true,
-            RedirectStandardError = true,
+            RedirectStandardError = false,
             UseShellExecute = false,
             CreateNoWindow = true
         };

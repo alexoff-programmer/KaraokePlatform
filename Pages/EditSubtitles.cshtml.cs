@@ -293,8 +293,15 @@ public class EditSubtitlesModel : PageModel
 
                 string cleanTextForMms = normResult.NormalizedText;
 
+                string alignLang = task.Language;
+                if (string.IsNullOrEmpty(alignLang) || alignLang == "auto")
+                {
+                    int cyrillicCount = cleanTextForMms.Count(c => (c >= 'а' && c <= 'я') || (c >= 'А' && c <= 'Я') || c == 'ё' || c == 'Ё');
+                    alignLang = cyrillicCount > 0 ? "ru" : "en";
+                }
+
                 // Align corrected text to absolute audio window
-                var segmentWords = await _forceAligner.AlignAudioAsync(allSamples, sampleStart, sampleEnd, cleanTextForMms, task.Language, 0);
+                var segmentWords = await _forceAligner.AlignAudioAsync(allSamples, sampleStart, sampleEnd, cleanTextForMms, alignLang, 0);
 
                 var alignedWords = new List<WordTimeInfo>();
                 int wordsToMap = Math.Min(segmentWords.Count, normResult.OriginalWords.Count);

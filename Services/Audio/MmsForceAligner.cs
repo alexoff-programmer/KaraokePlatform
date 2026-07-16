@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -13,13 +14,14 @@ using Microsoft.ML.OnnxRuntime.Tensors;
 
 namespace KaraokePlatform.Services.Audio;
 
-public class MmsForceAligner
+public class MmsForceAligner : IDisposable
 {
     private readonly IWebHostEnvironment _environment;
     private readonly ILogger<MmsForceAligner> _logger;
-    private readonly string _modelPath;
-    private InferenceSession? _session;
+    private readonly string _modelsDir;
+    private readonly ConcurrentDictionary<string, InferenceSession> _sessions = new ConcurrentDictionary<string, InferenceSession>();
     private readonly object _lock = new object();
+    private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(20) };
 
     // ──────────────────────────────────────────────────────────────────
     //  BEAM SEARCH ПАРАМЕТРЫ
@@ -40,54 +42,62 @@ public class MmsForceAligner
     {
         _environment = environment;
         _logger = logger;
-        _modelPath = Path.Combine(_environment.ContentRootPath, "Models", "mms-1b-all.onnx");
+        _modelsDir = Path.Combine(_environment.ContentRootPath, "Models");
     }
 
-    private async Task EnsureModelLoadedAsync()
+    private async Task<InferenceSession> GetSessionAsync(string modelName)
     {
-        if (_session != null) return;
-
-        if (!File.Exists(_modelPath))
+        lock (_lock)
         {
-            _logger.LogInformation("ONNX-модель выравнивания не найдена. Скачиваем Xenova/mms-1b-all quantized ONNX...");
-            var directory = Path.GetDirectoryName(_modelPath);
+            if (_sessions.TryGetValue(modelName, out var s))
+                return s;
+        }
+
+        string modelPath = Path.Combine(_modelsDir, modelName);
+
+        if (!File.Exists(modelPath))
+        {
+            _logger.LogInformation("ONNX-модель выравнивания {ModelName} не найдена. Скачиваем...", modelName);
+            var directory = Path.GetDirectoryName(modelPath);
             if (directory != null && !Directory.Exists(directory))
                 Directory.CreateDirectory(directory);
 
-            var downloadUrl = "https://huggingface.co/Xenova/mms-1b-all/resolve/main/onnx/model_quantized.onnx";
-            using var client = new HttpClient();
-            client.Timeout = TimeSpan.FromMinutes(20);
+            string downloadUrl = modelName.Contains("russian")
+                ? "https://modelscope.cn/api/v1/models/onnx-community/wav2vec2-large-xlsr-53-russian-ONNX/repo?Revision=master&FilePath=onnx/model_quantized.onnx"
+                : "https://modelscope.cn/api/v1/models/Xenova/mms-1b-all/repo?Revision=master&FilePath=onnx/model_quantized.onnx";
 
-            using var response = await client.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead);
+            using var response = await _httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead);
             response.EnsureSuccessStatusCode();
 
-            using var fileStream = new FileStream(_modelPath, FileMode.Create, FileAccess.Write, FileShare.None);
+            using var fileStream = new FileStream(modelPath, FileMode.Create, FileAccess.Write, FileShare.None);
             await response.Content.CopyToAsync(fileStream);
-            _logger.LogInformation("ONNX-модель выравнивания успешно скачана.");
+            _logger.LogInformation("ONNX-модель {ModelName} успешно скачана.", modelName);
         }
 
         lock (_lock)
         {
-            if (_session == null)
+            if (_sessions.TryGetValue(modelName, out var s))
+                return s;
+
+            using var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
+
+            try
             {
-                var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
-
-                try
-                {
-                    // 0 — это обычно индекс основной видеокарты (в вашем случае Radeon 780M)
-                    options.AppendExecutionProvider_DML(0);
-                    _logger.LogInformation("Сессия ONNX Runtime для MMS успешно переключена на GPU (DirectML / Radeon 780M).");
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning($"Не удалось инициализировать DirectML GPU: {ex.Message}. Откат на CPU.");
-                    options.IntraOpNumThreads = 1;
-                    options.InterOpNumThreads = 1;
-                    options.AppendExecutionProvider_CPU();
-                }
-
-                _session = new InferenceSession(_modelPath, options);
+                // 0 — это обычно индекс основной видеокарты (в вашем случае Radeon 780M)
+                options.AppendExecutionProvider_DML(0);
+                _logger.LogInformation("Сессия ONNX Runtime для {ModelName} успешно переключена на GPU (DirectML).", modelName);
             }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"Не удалось инициализировать DirectML GPU: {ex.Message}. Откат на CPU.");
+                options.IntraOpNumThreads = 1;
+                options.InterOpNumThreads = 1;
+                options.AppendExecutionProvider_CPU();
+            }
+
+            var session = new InferenceSession(modelPath, options);
+            _sessions[modelName] = session;
+            return session;
         }
     }
 
@@ -100,7 +110,11 @@ public class MmsForceAligner
         int runwayFrames = 0,
         List<AudioInterval>? vadIntervals = null)
     {
-        await EnsureModelLoadedAsync();
+        string modelName = language.ToLower() == "ru" 
+            ? "wav2vec2-large-xlsr-53-russian.onnx" 
+            : "mms-1b-all.onnx";
+
+        var session = await GetSessionAsync(modelName);
 
         if (string.IsNullOrWhiteSpace(text) || allSamples == null || allSamples.Length == 0)
             return new List<WordTimeInfo>();
@@ -152,7 +166,7 @@ public class MmsForceAligner
         int N = tokenIds.Length;
 
         // ONNX-инференс
-        float[,] logProbs = RunInference(processedSamples);
+        float[,] logProbs = RunInference(processedSamples, session);
         int T = logProbs.GetLength(0);
 
         // Внедрить VAD-маску на уровне логитов
@@ -500,18 +514,18 @@ public class MmsForceAligner
         return merged;
     }
 
-    private float[,] RunInference(float[] samples)
+    private float[,] RunInference(float[] samples, InferenceSession session)
     {
         float[,] logits;
         lock (_lock) // Фикс: Потокобезопасная защита инференса ONNX-сессии
         {
-            string inputName = _session!.InputMetadata.Keys.First();
-            string outputName = _session.OutputMetadata.Keys.First();
+            string inputName = session.InputMetadata.Keys.First();
+            string outputName = session.OutputMetadata.Keys.First();
 
             var inputTensor = new DenseTensor<float>(samples, new[] { 1, samples.Length });
             var inputs = new List<NamedOnnxValue> { NamedOnnxValue.CreateFromTensor(inputName, inputTensor) };
 
-            using var results = _session.Run(inputs);
+            using var results = session.Run(inputs);
             var outputTensor = results.First().AsTensor<float>();
 
             int frameCount = outputTensor.Dimensions[1];
@@ -637,9 +651,19 @@ public class MmsForceAligner
             var vocabDict = new Dictionary<char, int>();
 
             if (rawVocab != null)
+            {
                 foreach (var kvp in rawVocab)
+                {
                     if (kvp.Key.Length == 1)
+                    {
                         vocabDict[kvp.Key[0]] = kvp.Value;
+                    }
+                    else if (kvp.Key == "[PAD]" || kvp.Key == "<pad>")
+                    {
+                        vocabDict['<'] = kvp.Value;
+                    }
+                }
+            }
 
             return vocabDict;
         }
@@ -647,6 +671,18 @@ public class MmsForceAligner
         {
             _logger.LogError(ex, "Не удалось загрузить словарь из {Path}.", vocabPath);
             return new Dictionary<char, int>();
+        }
+    }
+
+    public void Dispose()
+    {
+        lock (_lock)
+        {
+            foreach (var session in _sessions.Values)
+            {
+                session?.Dispose();
+            }
+            _sessions.Clear();
         }
     }
 }

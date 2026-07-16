@@ -6,7 +6,7 @@ namespace KaraokePlatform.Services.Audio.Interfaces;
 
 public interface ISpeechRecognizer
 {
-    Task<List<WordTimeInfo>> TranscribeAndMergeTokensAsync(
+    Task<(List<WordTimeInfo> Words, string Language)> TranscribeAndMergeTokensAsync(
         string wavPath,
         string language,
         Action<int> onProgress,

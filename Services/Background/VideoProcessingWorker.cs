@@ -46,6 +46,32 @@ public class VideoProcessingWorker : BackgroundService
     {
         _logger.LogInformation("Фоновый воркер обработки видео запущен.");
 
+        // Принудительная очистка зависших временных папок при старте приложения
+        try
+        {
+            var tempRoot = Path.Combine(Path.GetTempPath(), "KaraokeTemp");
+            if (Directory.Exists(tempRoot))
+            {
+                var tempDirs = Directory.GetDirectories(tempRoot, "sep_*");
+                foreach (var dir in tempDirs)
+                {
+                    try
+                    {
+                        Directory.Delete(dir, true);
+                        _logger.LogInformation($"Очищена зависшая временная папка: {dir}");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning($"Не удалось удалить зависшую папку {dir}: {ex.Message}");
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Ошибка при очистке временных папок при старте воркера.");
+        }
+
         await foreach (var taskId in _queueChannel.ReadTasksAsync(stoppingToken))
         {
             if (stoppingToken.IsCancellationRequested) break;
@@ -111,14 +137,14 @@ public class VideoProcessingWorker : BackgroundService
                                 if (t != null)
                                 {
                                     t.Progress = progress;
-                                    await db.SaveChangesAsync(CancellationToken.None);
+                                    await db.SaveChangesAsync(taskToken);
                                 }
                             }
 
                             if (!string.IsNullOrEmpty(username))
                             {
                                 string statusText = $"Processing: {progress}% (Распознавание ИИ...)";
-                                await _hubContext.Clients.Group(username).SendAsync("UpdateTaskStatus", task.Id.ToString(), statusText, null, CancellationToken.None);
+                                await _hubContext.Clients.Group(username).SendAsync("UpdateTaskStatus", task.Id.ToString(), statusText, null, taskToken);
                             }
                         });
 
@@ -127,12 +153,12 @@ public class VideoProcessingWorker : BackgroundService
                         task.DetectedLinesJson = System.Text.Json.JsonSerializer.Serialize(phrases);
                         task.Status = TaskStatus.AwaitingReview;
                         task.UpdatedAt = DateTime.UtcNow;
-                        await context.SaveChangesAsync(CancellationToken.None);
+                        await context.SaveChangesAsync(taskToken);
 
                         if (!string.IsNullOrEmpty(username))
                         {
                             await _hubContext.Clients.Group(username)
-                                .SendAsync("UpdateTaskStatus", task.Id.ToString(), "AwaitingReview", null, CancellationToken.None);
+                                .SendAsync("UpdateTaskStatus", task.Id.ToString(), "AwaitingReview", null, taskToken);
                         }
 
                         _logger.LogInformation($"Текст для задачи {task.Id} успешно распознан и ожидает проверки.");
@@ -147,11 +173,11 @@ public class VideoProcessingWorker : BackgroundService
                         if (!string.IsNullOrEmpty(username))
                         {
                             await _hubContext.Clients.Group(username)
-                                .SendAsync("UpdateTaskStatus", task.Id.ToString(), "Processing: 60% (Сборка видео...)", null, CancellationToken.None);
+                                .SendAsync("UpdateTaskStatus", task.Id.ToString(), "Processing: 60% (Сборка видео...)", null, taskToken);
                         }
 
                         task.Progress = 60;
-                        await context.SaveChangesAsync(CancellationToken.None);
+                        await context.SaveChangesAsync(taskToken);
 
                         var outputFolder = Path.Combine(webHostEnvironment.WebRootPath, "output");
                         var assOutputPath = Path.Combine(outputFolder, $"{task.Id}.ass");
@@ -179,12 +205,12 @@ public class VideoProcessingWorker : BackgroundService
                         task.Progress = 100;
                         task.VideoFilePath = Path.Combine("output", videoFileName);
                         task.UpdatedAt = DateTime.UtcNow;
-                        await context.SaveChangesAsync(CancellationToken.None);
+                        await context.SaveChangesAsync(taskToken);
 
                         if (!string.IsNullOrEmpty(username))
                         {
                             await _hubContext.Clients.Group(username)
-                                .SendAsync("UpdateTaskStatus", task.Id.ToString(), "Completed", task.VideoFilePath.Replace("\\", "/"), CancellationToken.None);
+                                .SendAsync("UpdateTaskStatus", task.Id.ToString(), "Completed", task.VideoFilePath.Replace("\\", "/"), taskToken);
                         }
 
                         _logger.LogInformation($"Успешно собрано видео для задачи: {task.Id}");

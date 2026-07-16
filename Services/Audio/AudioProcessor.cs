@@ -105,7 +105,18 @@ public class AudioProcessor : IAudioProcessor
         {
             if (Directory.Exists(tempOutputDir))
             {
-                try { Directory.Delete(tempOutputDir, true); } catch { }
+                for (int i = 0; i < 5; i++)
+                {
+                    try
+                    {
+                        Directory.Delete(tempOutputDir, true);
+                        break;
+                    }
+                    catch
+                    {
+                        System.Threading.Thread.Sleep(200);
+                    }
+                }
             }
         }
     }

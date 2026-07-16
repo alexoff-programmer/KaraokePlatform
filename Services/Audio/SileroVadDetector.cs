@@ -47,7 +47,7 @@ public class SileroVadDetector : IDisposable
         _session = new InferenceSession(_modelPath, options);
     }
 
-    public async Task<List<AudioInterval>> GetSpeechIntervalsAsync(string wavPath, float threshold = 0.5f)
+    public async Task<List<AudioInterval>> GetSpeechIntervalsAsync(string wavPath, float threshold = 0.25f)
     {
         await EnsureModelLoadedAsync();
 
@@ -82,23 +82,24 @@ public class SileroVadDetector : IDisposable
         var cState = new float[2 * 1 * 64];
         var combinedState = new float[2 * 1 * stateLength];
 
+        var chunk = new float[chunkSize];
+        var inputTensor = new DenseTensor<float>(chunk, new[] { 1, chunkSize });
+        var srTensor = new DenseTensor<long>(new[] { (long)sampleRate }, new[] { 1 });
+
         var rawIntervals = new List<AudioInterval>();
         bool inSpeech = false;
         double speechStart = 0;
 
         for (int i = 0; i < numChunks; i++)
         {
-            var chunk = new float[chunkSize];
             Array.Copy(samples, i * chunkSize, chunk, 0, chunkSize);
 
             // Prepare inputs
-            var inputs = new List<NamedOnnxValue>();
-            
-            var inputTensor = new DenseTensor<float>(chunk, new[] { 1, chunkSize });
-            inputs.Add(NamedOnnxValue.CreateFromTensor("input", inputTensor));
-
-            var srTensor = new DenseTensor<long>(new[] { (long)sampleRate }, new[] { 1 });
-            inputs.Add(NamedOnnxValue.CreateFromTensor("sr", srTensor));
+            var inputs = new List<NamedOnnxValue>
+            {
+                NamedOnnxValue.CreateFromTensor("input", inputTensor),
+                NamedOnnxValue.CreateFromTensor("sr", srTensor)
+            };
 
             if (useSplitState)
             {
@@ -167,7 +168,12 @@ public class SileroVadDetector : IDisposable
         return MergeAndFilterIntervals(rawIntervals);
     }
 
-    private List<AudioInterval> MergeAndFilterIntervals(List<AudioInterval> rawIntervals, double minSpeechDurationSec = 0.5, double maxSilenceMergeSec = 0.3)
+    private List<AudioInterval> MergeAndFilterIntervals(
+        List<AudioInterval> rawIntervals, 
+        double minSpeechDurationSec = 0.8, 
+        double maxSilenceMergeSec = 0.7, 
+        double maxSpeechDurationSec = 10.0,
+        double speechPadSec = 0.25)
     {
         if (rawIntervals.Count == 0) return rawIntervals;
 
@@ -177,7 +183,11 @@ public class SileroVadDetector : IDisposable
         for (int i = 1; i < rawIntervals.Count; i++)
         {
             var next = rawIntervals[i];
-            if ((next.Start - current.End).TotalSeconds <= maxSilenceMergeSec)
+            double gap = (next.Start - current.End).TotalSeconds;
+            double prospectiveDuration = (next.End - current.Start).TotalSeconds;
+
+            // Объединяем, если пауза мала И результирующий сегмент не превышает максимальную длину
+            if (gap <= maxSilenceMergeSec && prospectiveDuration <= maxSpeechDurationSec)
             {
                 current = current with { End = next.End };
             }
@@ -189,7 +199,23 @@ public class SileroVadDetector : IDisposable
         }
         merged.Add(current);
 
-        return merged.Where(item => (item.End - item.Start).TotalSeconds >= minSpeechDurationSec).ToList();
+        // Фильтруем по минимальной длине и добавляем Speech Pad (амортизацию)
+        var result = new List<AudioInterval>();
+        foreach (var item in merged)
+        {
+            var duration = (item.End - item.Start).TotalSeconds;
+            if (duration >= minSpeechDurationSec)
+            {
+                var paddedStart = item.Start - TimeSpan.FromSeconds(speechPadSec);
+                if (paddedStart < TimeSpan.Zero) paddedStart = TimeSpan.Zero;
+
+                var paddedEnd = item.End + TimeSpan.FromSeconds(speechPadSec);
+
+                result.Add(new AudioInterval(paddedStart, paddedEnd));
+            }
+        }
+
+        return result;
     }
 
     public void Dispose()

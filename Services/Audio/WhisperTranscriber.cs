@@ -89,13 +89,23 @@ public class WhisperTranscriber
             string? geminiApiKey = task?.GeminiApiKey;
             string? trackName = task != null ? Path.GetFileNameWithoutExtension(task.OriginalFileName) : null;
 
-            var words = await _speechRecognizer.TranscribeAndMergeTokensAsync(
+            var (words, detectedLanguage) = await _speechRecognizer.TranscribeAndMergeTokensAsync(
                 whisperVav16kPath,
                 language,
                 p => onProgress.Invoke(25 + (p * 25 / 100)),
                 geminiApiKey,
                 trackName,
                 vadIntervals); // <-- Передаем интервалы VAD в Whisper
+
+            // Сохраняем определенный язык в БД, если было выбрано автоматическое определение
+            if (task != null)
+            {
+                if (string.IsNullOrEmpty(task.Language) || task.Language == "auto")
+                {
+                    task.Language = detectedLanguage;
+                    await _context.SaveChangesAsync();
+                }
+            }
 
             // 4. Группируем полученные слова в строчки караоке
             var generator = new AssSubtitleGenerator();
