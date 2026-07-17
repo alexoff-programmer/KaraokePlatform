@@ -21,13 +21,16 @@ public class WhisperRecognizer : ISpeechRecognizer, IDisposable
     private WhisperFactory? _factory;
     private readonly object _lock = new object();
     private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(20) };
+    private readonly Microsoft.Extensions.Logging.ILogger<WhisperRecognizer>? _logger;
 
     public WhisperRecognizer(
         IOptions<WhisperSettings> settings,
-        IWebHostEnvironment environment)
+        IWebHostEnvironment environment,
+        Microsoft.Extensions.Logging.ILogger<WhisperRecognizer>? logger = null)
     {
         var path = settings.Value.ModelPath;
         _modelPath = Path.IsPathRooted(path) ? path : Path.Combine(environment.ContentRootPath, path);
+        _logger = logger;
     }
 
     private WhisperFactory GetFactory()
@@ -188,12 +191,29 @@ public class WhisperRecognizer : ISpeechRecognizer, IDisposable
                     {
                         foreach (var token in segment.Tokens)
                         {
-                            var text = token.Text?.Trim();
-                            if (!string.IsNullOrEmpty(text) && !text.StartsWith("[_") && !text.StartsWith("<|") && !text.EndsWith("]"))
+                            var rawText = token.Text;
+                            if (string.IsNullOrEmpty(rawText)) continue;
+
+                            if (rawText.StartsWith("[_") || rawText.StartsWith("<|") || rawText.EndsWith("]"))
+                                continue;
+
+                            bool hasSpace = rawText.StartsWith(" ") || rawText.StartsWith("Ġ") || rawText.StartsWith(" ");
+                            bool isContinuation = !hasSpace && alignedWords.Count > 0;
+
+                            var cleanText = rawText.Trim();
+                            if (string.IsNullOrEmpty(cleanText)) continue;
+
+                            if (isContinuation)
+                            {
+                                var lastWord = alignedWords[alignedWords.Count - 1];
+                                lastWord.Text += cleanText;
+                                lastWord.End = interval.Start + TimeSpan.FromMilliseconds(token.End * 10);
+                            }
+                            else
                             {
                                 alignedWords.Add(new WordTimeInfo
                                 {
-                                    Text = text,
+                                    Text = cleanText,
                                     Start = interval.Start + TimeSpan.FromMilliseconds(token.Start * 10),
                                     End = interval.Start + TimeSpan.FromMilliseconds(token.End * 10)
                                 });
@@ -216,12 +236,29 @@ public class WhisperRecognizer : ISpeechRecognizer, IDisposable
                 {
                     foreach (var token in segment.Tokens)
                     {
-                        var text = token.Text?.Trim();
-                        if (!string.IsNullOrEmpty(text) && !text.StartsWith("[_") && !text.StartsWith("<|") && !text.EndsWith("]"))
+                        var rawText = token.Text;
+                        if (string.IsNullOrEmpty(rawText)) continue;
+
+                        if (rawText.StartsWith("[_") || rawText.StartsWith("<|") || rawText.EndsWith("]"))
+                            continue;
+
+                        bool hasSpace = rawText.StartsWith(" ") || rawText.StartsWith("Ġ") || rawText.StartsWith(" ");
+                        bool isContinuation = !hasSpace && alignedWords.Count > 0;
+
+                        var cleanText = rawText.Trim();
+                        if (string.IsNullOrEmpty(cleanText)) continue;
+
+                        if (isContinuation)
+                        {
+                            var lastWord = alignedWords[alignedWords.Count - 1];
+                            lastWord.Text += cleanText;
+                            lastWord.End = TimeSpan.FromMilliseconds(token.End * 10);
+                        }
+                        else
                         {
                             alignedWords.Add(new WordTimeInfo
                             {
-                                Text = text,
+                                Text = cleanText,
                                 Start = TimeSpan.FromMilliseconds(token.Start * 10),
                                 End = TimeSpan.FromMilliseconds(token.End * 10)
                             });
@@ -232,6 +269,89 @@ public class WhisperRecognizer : ISpeechRecognizer, IDisposable
         }
 
         onProgress?.Invoke(100);
+        return (alignedWords, finalLanguage);
+    }
+
+    public async Task<(List<WordTimeInfo> Words, string Language)> TranscribeSamplesAsync(
+        float[] samples,
+        string language,
+        string? geminiApiKey = null,
+        string? trackName = null)
+    {
+        _logger?.LogInformation("[Whisper] Starting transcription on sample slice (samples count: {Count}, language parameter: {Language})", samples.Length, language);
+        await EnsureModelDownloadedAsync();
+
+        string finalLanguage = language;
+        if (language.ToLower() == "auto")
+        {
+            finalLanguage = DetectAudioLanguage(samples);
+            _logger?.LogInformation("[Whisper] Auto-detected language: {Language}", finalLanguage);
+        }
+
+        var factory = GetFactory();
+
+        var processorBuilder = factory.CreateBuilder()
+            .WithLanguage(finalLanguage)
+            .WithNoContext();
+
+        processorBuilder.WithBeamSearchSamplingStrategy(beam =>
+        {
+            beam.WithBeamSize(5);
+        });
+
+        using var processor = processorBuilder
+            .WithTemperature(0.0f)
+            .WithTokenTimestamps()
+            .WithTokenTimestampsThreshold(0.01f)
+            .SplitOnWord()
+            .Build();
+
+        var alignedWords = new List<WordTimeInfo>();
+
+        _logger?.LogInformation("[Whisper] Running model inference on slice...");
+        await foreach (var segment in processor.ProcessAsync(samples))
+        {
+            if (segment.Tokens != null)
+            {
+                foreach (var token in segment.Tokens)
+                {
+                    var rawText = token.Text;
+                    if (string.IsNullOrEmpty(rawText)) continue;
+
+                    if (rawText.StartsWith("[_") || rawText.StartsWith("<|") || rawText.EndsWith("]"))
+                        continue;
+
+                    bool hasSpace = rawText.StartsWith(" ") || rawText.StartsWith("Ġ") || rawText.StartsWith(" ");
+                    bool isContinuation = !hasSpace && alignedWords.Count > 0;
+
+                    var cleanText = rawText.Trim();
+                    if (string.IsNullOrEmpty(cleanText)) continue;
+
+                    if (isContinuation)
+                    {
+                        var lastWord = alignedWords[alignedWords.Count - 1];
+                        var oldText = lastWord.Text;
+                        lastWord.Text += cleanText;
+                        lastWord.End = TimeSpan.FromMilliseconds(token.End * 10);
+                        _logger?.LogDebug("[Whisper] BPE merge: '{OldText}' + '{CleanText}' -> '{NewText}' (end extended to {End})", 
+                            oldText, cleanText, lastWord.Text, lastWord.End);
+                    }
+                    else
+                    {
+                        var newWord = new WordTimeInfo
+                        {
+                            Text = cleanText,
+                            Start = TimeSpan.FromMilliseconds(token.Start * 10),
+                            End = TimeSpan.FromMilliseconds(token.End * 10)
+                        };
+                        alignedWords.Add(newWord);
+                        _logger?.LogDebug("[Whisper] New word token: '{Text}' ({Start} -> {End})", newWord.Text, newWord.Start, newWord.End);
+                    }
+                }
+            }
+        }
+
+        _logger?.LogInformation("[Whisper] Slice transcription complete. Words generated: {Count}", alignedWords.Count);
         return (alignedWords, finalLanguage);
     }
 

@@ -13,4 +13,10 @@ public interface ISpeechRecognizer
         string? geminiApiKey = null,
         string? trackName = null,
         List<AudioInterval>? vadIntervals = null);
+
+    Task<(List<WordTimeInfo> Words, string Language)> TranscribeSamplesAsync(
+        float[] samples,
+        string language,
+        string? geminiApiKey = null,
+        string? trackName = null);
 }
