@@ -48,7 +48,6 @@ builder.Services.AddScoped<VideoRenderer>();
 // РЕГИСТРАЦИЯ КОНВЕЙЕРА ОБРАБОТКИ
 builder.Services.AddSingleton<QueueChannel>(); // Очередь должна быть одна на всё приложение
 builder.Services.AddSingleton<TaskCancellationManager>();
-builder.Services.AddSingleton<MmsForceAligner>();
 builder.Services.AddHostedService<VideoProcessingWorker>(); // Запуск фонового процесса
 
 builder.Services.AddRazorPages(options =>

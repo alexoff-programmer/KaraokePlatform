@@ -71,16 +71,25 @@ public class SileroVadDetector : IDisposable
 
         // Determine VAD ONNX input structure
         bool useSplitState = _session.InputMetadata.ContainsKey("h");
-        int stateLength = 128;
-        if (!useSplitState && _session.InputMetadata.TryGetValue("state", out var stateMeta))
-        {
-            stateLength = stateMeta.Dimensions.Length >= 3 ? stateMeta.Dimensions[2] : 128;
-        }
 
-        // Initialize state tensors
+        // Жестко фиксируем размерность под официальный спецификат Silero ONNX
         var hState = new float[2 * 1 * 64];
         var cState = new float[2 * 1 * 64];
-        var combinedState = new float[2 * 1 * stateLength];
+        
+        int stateLength = 64; // Default fallback for v4
+        if (!useSplitState && _session.InputMetadata.TryGetValue("state", out var stateMeta))
+        {
+            if (stateMeta.Dimensions.Length >= 3 && stateMeta.Dimensions[2] > 0)
+            {
+                stateLength = stateMeta.Dimensions[2];
+            }
+            else
+            {
+                stateLength = 128; // Fallback for v5/dynamic
+            }
+        }
+        
+        var combinedState = new float[2 * 1 * stateLength]; 
 
         var chunk = new float[chunkSize];
         var inputTensor = new DenseTensor<float>(chunk, new[] { 1, chunkSize });

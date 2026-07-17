@@ -32,7 +32,6 @@ public class EditSubtitlesModel : PageModel
     private readonly ISubtitleGenerator _subtitleGenerator;
     private readonly VideoRenderer _videoRenderer;
     private readonly QueueChannel _queueChannel;
-    private readonly MmsForceAligner _forceAligner;
     private readonly IAudioProcessor _audioProcessor;
 
     public EditSubtitlesModel(
@@ -41,7 +40,6 @@ public class EditSubtitlesModel : PageModel
         ISubtitleGenerator subtitleGenerator, 
         VideoRenderer videoRenderer, 
         QueueChannel queueChannel,
-        MmsForceAligner forceAligner,
         IAudioProcessor audioProcessor)
     {
         _context = context;
@@ -49,7 +47,6 @@ public class EditSubtitlesModel : PageModel
         _subtitleGenerator = subtitleGenerator;
         _videoRenderer = videoRenderer;
         _queueChannel = queueChannel;
-        _forceAligner = forceAligner;
         _audioProcessor = audioProcessor;
     }
 
@@ -229,21 +226,7 @@ public class EditSubtitlesModel : PageModel
             return new JsonResult(new { success = false, message = "Gemini вернул некорректное количество строк." });
         }
 
-        // 3. Re-run force alignment on the audio for each line using the corrected text
-        string fullAudioPath = Path.Combine(_environment.WebRootPath, "output", $"{task.Id}_vocals.wav");
-
-        if (!System.IO.File.Exists(fullAudioPath))
-        {
-            return new JsonResult(new { success = false, message = "Файл вокала на сервере не найден." });
-        }
-
-        float[] allSamples;
-        using (var fileStream = System.IO.File.OpenRead(fullAudioPath))
-        {
-            var waveParser = new Whisper.net.Wave.WaveParser(fileStream);
-            allSamples = await waveParser.GetAvgSamplesAsync();
-        }
-
+        // 3. Redistribute proportional times for each line using the corrected text
         var updatedPhrases = new List<List<WordTimeInfo>>();
 
         for (int i = 0; i < originalPhrases.Count; i++)
@@ -257,82 +240,7 @@ public class EditSubtitlesModel : PageModel
                 continue;
             }
 
-            // Get original boundary timestamps
-            var phraseStart = oldPhraseWords.First().Start;
-            var phraseEnd = oldPhraseWords.Last().End;
-
-            // Apply 150ms leading padding and 350ms trailing padding (Audio Padding)
-            var padLeft = TimeSpan.FromMilliseconds(150);
-            var padRight = TimeSpan.FromMilliseconds(350);
-
-            var paddedStart = phraseStart - padLeft;
-            if (paddedStart < TimeSpan.Zero) paddedStart = TimeSpan.Zero;
-
-            var paddedEnd = phraseEnd + padRight;
-            double totalDurationSec = allSamples.Length / 16000.0;
-            if (paddedEnd > TimeSpan.FromSeconds(totalDurationSec))
-                paddedEnd = TimeSpan.FromSeconds(totalDurationSec);
-
-            int sampleStart = (int)Math.Round(paddedStart.TotalSeconds * 16000.0);
-            int sampleEnd = (int)Math.Round(paddedEnd.TotalSeconds * 16000.0);
-
-            if (sampleStart >= sampleEnd)
-            {
-                updatedPhrases.Add(oldPhraseWords);
-                continue;
-            }
-
-            try
-            {
-                var normResult = MmsTextNormalizer.Normalize(newTextLine);
-                if (normResult.CleanWords.Count == 0)
-                {
-                    updatedPhrases.Add(oldPhraseWords);
-                    continue;
-                }
-
-                string cleanTextForMms = normResult.NormalizedText;
-
-                string alignLang = task.Language;
-                if (string.IsNullOrEmpty(alignLang) || alignLang == "auto")
-                {
-                    int cyrillicCount = cleanTextForMms.Count(c => (c >= 'а' && c <= 'я') || (c >= 'А' && c <= 'Я') || c == 'ё' || c == 'Ё');
-                    alignLang = cyrillicCount > 0 ? "ru" : "en";
-                }
-
-                // Align corrected text to absolute audio window
-                var segmentWords = await _forceAligner.AlignAudioAsync(allSamples, sampleStart, sampleEnd, cleanTextForMms, alignLang, 0);
-
-                var alignedWords = new List<WordTimeInfo>();
-                int wordsToMap = Math.Min(segmentWords.Count, normResult.OriginalWords.Count);
-                for (int wIdx = 0; wIdx < wordsToMap; wIdx++)
-                {
-                    var alignedWord = segmentWords[wIdx];
-                    var originalWordText = normResult.OriginalWords[wIdx];
-
-                    alignedWords.Add(new WordTimeInfo
-                    {
-                        Text = originalWordText,
-                        StartSample = alignedWord.StartSample,
-                        EndSample = alignedWord.EndSample
-                    });
-                }
-
-                if (alignedWords.Count > 0)
-                {
-                    updatedPhrases.Add(alignedWords);
-                }
-                else
-                {
-                    // Fallback to proportional interpolation if alignment is empty
-                    updatedPhrases.Add(RedistributeProportional(oldPhraseWords, newTextLine));
-                }
-            }
-            catch (Exception)
-            {
-                // Fallback to proportional interpolation on error
-                updatedPhrases.Add(RedistributeProportional(oldPhraseWords, newTextLine));
-            }
+            updatedPhrases.Add(RedistributeProportional(oldPhraseWords, newTextLine));
         }
 
         return new JsonResult(new { 

@@ -94,13 +94,10 @@ public class WhisperTranscriber
             var generator = new AssSubtitleGenerator();
             var phrases = generator.GroupWordsIntoPhrases(words);
 
-            // 5. Прогоняем сформированный список фраз через AssVadCorrector для коррекции таймингов
-            var correctedPhrases = AssVadCorrector.Correct(phrases, vadIntervals);
-
             // Запись итогового отладочного дампа фраз
-            File.WriteAllText(Path.Combine(debugDir, "4_final_corrected_phrases.json"), System.Text.Json.JsonSerializer.Serialize(correctedPhrases, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+            File.WriteAllText(Path.Combine(debugDir, "4_final_corrected_phrases.json"), System.Text.Json.JsonSerializer.Serialize(phrases, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
 
-            return correctedPhrases;
+            return phrases;
         }
         finally
         {

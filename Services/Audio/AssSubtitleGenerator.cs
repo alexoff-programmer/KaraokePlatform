@@ -284,6 +284,21 @@ public class AssSubtitleGenerator : ISubtitleGenerator
         }
     }
 
+    private static (string Leading, string Core, string Trailing) SplitPunctuation(string wordText)
+    {
+        if (string.IsNullOrEmpty(wordText)) return (string.Empty, string.Empty, string.Empty);
+
+        var matchLeading = Regex.Match(wordText, @"^[\p{P}&&[^\-']]+");
+        string leading = matchLeading.Success ? matchLeading.Value : string.Empty;
+
+        string remaining = wordText.Substring(leading.Length);
+        var matchTrailing = Regex.Match(remaining, @"[\p{P}&&[^\-']]+$");
+        string trailing = matchTrailing.Success ? matchTrailing.Value : string.Empty;
+
+        string core = remaining.Substring(0, remaining.Length - trailing.Length);
+        return (leading, core, trailing);
+    }
+
     public List<List<WordTimeInfo>> GroupWordsIntoPhrases(List<WordTimeInfo> words)
     {
         var phrases = new List<List<WordTimeInfo>>();
@@ -294,11 +309,11 @@ public class AssSubtitleGenerator : ISubtitleGenerator
         for (int i = 0; i < words.Count; i++)
         {
             var currWord = words[i];
-            string cleanText = PunctuationCleanRegex.Replace(currWord.Text ?? string.Empty, string.Empty).ToLower();
+            string cleanText = PunctuationCleanRegex.Replace(currWord.Text ?? string.Empty, string.Empty);
 
             if (string.IsNullOrWhiteSpace(cleanText)) continue;
 
-            var processedWord = currWord with { Text = cleanText };
+            var processedWord = currWord with { Text = currWord.Text?.Trim() ?? string.Empty };
 
             if (currentBlock.Count > 0)
             {
@@ -332,13 +347,13 @@ public class AssSubtitleGenerator : ISubtitleGenerator
     private bool CanFitInTwoLines(List<WordTimeInfo> blockWords, WordTimeInfo newWord, int maxLineLen)
     {
         var tempWords = new List<WordTimeInfo>(blockWords) { newWord };
-        int totalLen = tempWords.Sum(w => w.Text.Length) + tempWords.Count - 1;
+        int totalLen = tempWords.Sum(w => PunctuationCleanRegex.Replace(w.Text, string.Empty).Length) + tempWords.Count - 1;
         if (totalLen <= maxLineLen) return true;
 
         for (int k = 1; k < tempWords.Count; k++)
         {
-            int line1Len = tempWords.Take(k).Sum(w => w.Text.Length) + k - 1;
-            int line2Len = tempWords.Skip(k).Sum(w => w.Text.Length) + (tempWords.Count - k) - 1;
+            int line1Len = tempWords.Take(k).Sum(w => PunctuationCleanRegex.Replace(w.Text, string.Empty).Length) + k - 1;
+            int line2Len = tempWords.Skip(k).Sum(w => PunctuationCleanRegex.Replace(w.Text, string.Empty).Length) + (tempWords.Count - k) - 1;
 
             if (line1Len <= maxLineLen && line2Len <= maxLineLen) return true;
         }
@@ -348,7 +363,7 @@ public class AssSubtitleGenerator : ISubtitleGenerator
 
     private int GetBestSplitIndex(List<WordTimeInfo> blockWords, int maxLineLen)
     {
-        int totalLen = blockWords.Sum(w => w.Text.Length) + blockWords.Count - 1;
+        int totalLen = blockWords.Sum(w => PunctuationCleanRegex.Replace(w.Text, string.Empty).Length) + blockWords.Count - 1;
         if (totalLen <= maxLineLen) return -1;
 
         int bestK = -1;
@@ -356,8 +371,8 @@ public class AssSubtitleGenerator : ISubtitleGenerator
 
         for (int k = 1; k < blockWords.Count; k++)
         {
-            int line1Len = blockWords.Take(k).Sum(w => w.Text.Length) + k - 1;
-            int line2Len = blockWords.Skip(k).Sum(w => w.Text.Length) + (blockWords.Count - k) - 1;
+            int line1Len = blockWords.Take(k).Sum(w => PunctuationCleanRegex.Replace(w.Text, string.Empty).Length) + k - 1;
+            int line2Len = blockWords.Skip(k).Sum(w => PunctuationCleanRegex.Replace(w.Text, string.Empty).Length) + (blockWords.Count - k) - 1;
 
             if (line1Len <= maxLineLen && line2Len <= maxLineLen)
             {
@@ -383,8 +398,17 @@ public class AssSubtitleGenerator : ISubtitleGenerator
 
         if (!string.IsNullOrEmpty(word))
         {
-            string capitalizedWord = char.ToUpper(word[0]) + word[1..];
-            phrase[0] = firstWordInfo with { Text = capitalizedWord };
+            var (leading, core, trailing) = SplitPunctuation(word);
+            if (!string.IsNullOrEmpty(core))
+            {
+                string capitalizedCore = char.ToUpper(core[0]) + core[1..];
+                phrase[0] = firstWordInfo with { Text = leading + capitalizedCore + trailing };
+            }
+            else
+            {
+                string capitalizedWord = char.ToUpper(word[0]) + word[1..];
+                phrase[0] = firstWordInfo with { Text = capitalizedWord };
+            }
         }
     }
 
@@ -394,7 +418,20 @@ public class AssSubtitleGenerator : ISubtitleGenerator
     {
         if (string.IsNullOrEmpty(wordText)) return;
 
-        int len = wordText.Length;
+        var (leading, core, trailing) = SplitPunctuation(wordText);
+
+        if (string.IsNullOrEmpty(core))
+        {
+            lineBuilder.Append($@"{{\kf0}}{wordText}");
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(leading))
+        {
+            lineBuilder.Append($@"{{\kf0}}{leading}");
+        }
+
+        int len = core.Length;
         var charDurations = new int[len];
         int baseDurationCs = totalWordCs / len;
         int remainder = totalWordCs % len;
@@ -416,7 +453,12 @@ public class AssSubtitleGenerator : ISubtitleGenerator
 
         for (int i = 0; i < len; i++)
         {
-            lineBuilder.Append($"{{\\kf{charDurations[i]}}}{wordText[i]}");
+            lineBuilder.Append($"{{\\kf{charDurations[i]}}}{core[i]}");
+        }
+
+        if (!string.IsNullOrEmpty(trailing))
+        {
+            lineBuilder.Append($@"{{\kf0}}{trailing}");
         }
     }
 
