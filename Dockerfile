@@ -18,7 +18,7 @@ RUN dotnet publish KaraokePlatform.csproj -c Release -o /app
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
-# Устанавливаем системные зависимости: ffmpeg, libgomp1 и шрифты
+# Устанавливаем системные зависимости: ffmpeg, libgomp1, шрифты и Python3
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libgomp1 \
@@ -26,9 +26,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-open-sans \
     fonts-noto-core \
     ca-certificates \
+    python3 \
+    python3-pip \
+    python3-venv \
     && fc-cache -fv \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Создаем виртуальное окружение Python и устанавливаем audio-separator
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir audio-separator[cpu]
 
 # Копируем скомпилированное .NET приложение из первого этапа
 COPY --from=build-env /app .
