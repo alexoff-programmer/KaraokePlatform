@@ -75,23 +75,8 @@ public class AssSubtitleGenerator : ISubtitleGenerator
         var sb = new StringBuilder();
         BuildAssHeader(sb, fontName, fillStyle, primaryColor, secondaryColor, videoFormat);
 
-        var phrasesCopy = new List<List<WordTimeInfo>>();
-        foreach (var phrase in phrases)
-        {
-            if (phrase == null || phrase.Count == 0) continue;
-            var phraseCopy = phrase.Select(w => w with { }).ToList();
-            phrasesCopy.Add(phraseCopy);
-        }
-
-        if (phrasesCopy.Count == 0) return string.Empty;
-
-        for (int i = 0; i < phrasesCopy.Count; i++)
-        {
-            phrasesCopy[i] = InterpolateWordTimings(phrasesCopy[i]);
-        }
-
-        ExtendPhraseEnds(phrasesCopy);
-        BuildDialogueLinesFromPhrases(sb, phrasesCopy, fillStyle);
+        // Никакой повторной интерполяции! Передаем проверенные данные напрямую
+        BuildDialogueLinesFromPhrases(sb, phrases, fillStyle);
 
         return sb.ToString();
     }
@@ -304,12 +289,11 @@ public class AssSubtitleGenerator : ISubtitleGenerator
         var phrases = new List<List<WordTimeInfo>>();
         if (words == null || words.Count == 0) return phrases;
 
-        var interpolatedWords = InterpolateWordTimings(words);
         var currentBlock = new List<WordTimeInfo>();
 
-        for (int i = 0; i < interpolatedWords.Count; i++)
+        for (int i = 0; i < words.Count; i++)
         {
-            var currWord = interpolatedWords[i];
+            var currWord = words[i];
             string cleanText = PunctuationCleanRegex.Replace(currWord.Text ?? string.Empty, string.Empty).ToLower();
 
             if (string.IsNullOrWhiteSpace(cleanText)) continue;
@@ -467,43 +451,4 @@ public class AssSubtitleGenerator : ISubtitleGenerator
         return $"{hours:D1}:{mins:D2}:{secs:D2}.{cs:D2}";
     }
 
-    private List<WordTimeInfo> InterpolateWordTimings(List<WordTimeInfo> words)
-    {
-        if (words == null || words.Count == 0) return new List<WordTimeInfo>();
-
-        var cleanWords = words.Select(w => w with { }).ToList();
-
-        // 1. Убеждаемся, что каждое слово имеет положительную длительность
-        for (int i = 0; i < cleanWords.Count; i++)
-        {
-            if (cleanWords[i].End <= cleanWords[i].Start)
-            {
-                cleanWords[i].End = cleanWords[i].Start.Add(TimeSpan.FromMilliseconds(150));
-            }
-        }
-
-        // 2. Устраняем наложения без перераспределения:
-        // Если следующее слово начинается раньше, чем заканчивается предыдущее,
-        // сдвигаем конец предыдущего слова на начало следующего.
-        for (int i = 1; i < cleanWords.Count; i++)
-        {
-            if (cleanWords[i].Start < cleanWords[i - 1].End)
-            {
-                if (cleanWords[i].Start > cleanWords[i - 1].Start)
-                {
-                    cleanWords[i - 1].End = cleanWords[i].Start;
-                }
-                else
-                {
-                    cleanWords[i].Start = cleanWords[i - 1].End;
-                    if (cleanWords[i].End <= cleanWords[i].Start)
-                    {
-                        cleanWords[i].End = cleanWords[i].Start.Add(TimeSpan.FromMilliseconds(150));
-                    }
-                }
-            }
-        }
-
-        return cleanWords;
-    }
 }

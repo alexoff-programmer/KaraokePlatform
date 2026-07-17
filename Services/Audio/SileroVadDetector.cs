@@ -84,7 +84,7 @@ public class SileroVadDetector : IDisposable
 
         var chunk = new float[chunkSize];
         var inputTensor = new DenseTensor<float>(chunk, new[] { 1, chunkSize });
-        var srTensor = new DenseTensor<long>(new[] { (long)sampleRate }, new[] { 1 });
+        var srTensor = new DenseTensor<long>(new[] { (long)sampleRate }, Array.Empty<int>());
 
         var rawIntervals = new List<AudioInterval>();
         bool inSpeech = false;

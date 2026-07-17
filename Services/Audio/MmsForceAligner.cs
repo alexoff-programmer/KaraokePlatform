@@ -64,7 +64,7 @@ public class MmsForceAligner : IDisposable
 
             string downloadUrl = modelName.Contains("russian")
                 ? "https://modelscope.cn/api/v1/models/onnx-community/wav2vec2-large-xlsr-53-russian-ONNX/repo?Revision=master&FilePath=onnx/model_quantized.onnx"
-                : "https://modelscope.cn/api/v1/models/Xenova/mms-1b-all/repo?Revision=master&FilePath=onnx/model_quantized.onnx";
+                : "https://modelscope.cn/api/v1/models/Xenova/wav2vec2-large-xlsr-53-english/repo?Revision=master&FilePath=onnx/model_quantized.onnx";
 
             using var response = await _httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead);
             response.EnsureSuccessStatusCode();
@@ -80,6 +80,8 @@ public class MmsForceAligner : IDisposable
                 return s;
 
             using var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
+            options.IntraOpNumThreads = 1;
+            options.InterOpNumThreads = 1;
 
             try
             {
@@ -112,7 +114,7 @@ public class MmsForceAligner : IDisposable
     {
         string modelName = language.ToLower() == "ru" 
             ? "wav2vec2-large-xlsr-53-russian.onnx" 
-            : "mms-1b-all.onnx";
+            : "wav2vec2-large-xlsr-53-english.onnx";
 
         var session = await GetSessionAsync(modelName);
 
@@ -280,17 +282,6 @@ public class MmsForceAligner : IDisposable
     {
         int T = logProbs.GetLength(0);
         int N = tokenIds.Length;
-
-        int[] activeFramesUpTo = new int[T];
-        int totalActiveFrames = 0;
-        for (int t = 0; t < T; t++)
-        {
-            if (!isSilent[t])
-            {
-                totalActiveFrames++;
-            }
-            activeFramesUpTo[t] = totalActiveFrames;
-        }
 
         var beams = new List<(int state, float score, int[] path)>();
         
@@ -618,8 +609,11 @@ public class MmsForceAligner : IDisposable
                 }
             }
 
-            int wStartSample = sampleStart + startFrame * 320;
-            int wEndSample = sampleStart + (endFrame + 1) * 320;
+            var start = TimeSpan.FromMilliseconds(startFrame * 20);
+            var end = TimeSpan.FromMilliseconds((endFrame + 1) * 20);
+
+            int wStartSample = sampleStart + (int)Math.Round(start.TotalSeconds * 16000.0);
+            int wEndSample = sampleStart + (int)Math.Round(end.TotalSeconds * 16000.0);
 
             if (wEndSample <= wStartSample) wEndSample = wStartSample + 1600;
 

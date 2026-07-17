@@ -175,72 +175,13 @@ public class WhisperRecognizer : ISpeechRecognizer, IDisposable
         // ======================================================================
         // Цикл распознавания
         // ======================================================================
-        if (vadIntervals != null && vadIntervals.Count > 0)
+        Console.WriteLine("[Whisper DEBUG] Running transcription on full audio (single pass).");
+        await foreach (var segment in processor.ProcessAsync(allSamples))
         {
-            Console.WriteLine($"[Whisper DEBUG] Raw VAD intervals count: {vadIntervals.Count}");
-
-            // --- НАЧАЛО ФИКСА: Объединяем микро-интервалы в крупные макро-блоки (Куплеты / Припевы) ---
-            var macroIntervals = new List<AudioInterval>();
-            var sortedIntervals = vadIntervals.OrderBy(v => v.Start).ToList();
-
-            var currentMacro = sortedIntervals[0];
-            double maxGapToMergeSeconds = 4.0; // Паузы меньше 4 секунд (дыхание, короткие проигрыши) игнорируются
-
-            for (int i = 1; i < sortedIntervals.Count; i++)
+            if (!string.IsNullOrWhiteSpace(segment.Text))
             {
-                var nextInterval = sortedIntervals[i];
-
-                // Если расстояние между концом текущего макро-блока и началом следующего меньше порога
-                if ((nextInterval.Start - currentMacro.End).TotalSeconds < maxGapToMergeSeconds)
-                {
-                    currentMacro = currentMacro with { End = nextInterval.End };
-                }
-                else
-                {
-                    macroIntervals.Add(currentMacro);
-                    currentMacro = nextInterval;
-                }
-            }
-            macroIntervals.Add(currentMacro);
-
-            // Подменяем список интервалов на укрупненные макро-блоки
-            var workingIntervals = macroIntervals;
-            Console.WriteLine($"[Whisper DEBUG] Optimized Macro-VAD intervals count: {workingIntervals.Count}");
-            // --- КОНЕЦ ФИКСА ---
-
-            for (int idx = 0; idx < workingIntervals.Count; idx++)
-            {
-                var segment = workingIntervals[idx];
-                var segmentStart = segment.Start;
-                var segmentSamples = _audioProcessor.SliceSamples(allSamples, ref segmentStart, segment.End);
-
-                if (segmentSamples.Length == 0) continue;
-
-                await foreach (var segmentData in processor.ProcessAsync(segmentSamples))
-                {
-                    if (string.IsNullOrWhiteSpace(segmentData.Text)) continue;
-
-                    var absStart = segment.Start + segmentData.Start;
-                    var absEnd = segment.Start + segmentData.End;
-
-                    Console.WriteLine($"[Whisper DEBUG] VAD Segment: [{absStart} -> {absEnd}] -> '{segmentData.Text}'");
-                    segments.Add((segmentData.Text, absStart, absEnd));
-                }
-
-                int currentProgress = 30 + (idx * 45 / workingIntervals.Count);
-                onProgress?.Invoke(currentProgress);
-            }
-        }
-        else
-        {
-            Console.WriteLine("[Whisper DEBUG] No VAD intervals provided. Running on full audio.");
-            await foreach (var segment in processor.ProcessAsync(allSamples))
-            {
-                if (!string.IsNullOrWhiteSpace(segment.Text))
-                {
-                    Console.WriteLine($"[Whisper DEBUG] Raw Segment: [{segment.Start} -> {segment.End}] -> '{segment.Text}'");
-                    segments.Add((segment.Text, segment.Start, segment.End));
-                }
+                Console.WriteLine($"[Whisper DEBUG] Raw Segment: [{segment.Start} -> {segment.End}] -> '{segment.Text}'");
+                segments.Add((segment.Text, segment.Start, segment.End));
             }
         }
         // ======================================================================

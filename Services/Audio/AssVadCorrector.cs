@@ -17,62 +17,47 @@ public static class AssVadCorrector
             if (phrase == null || phrase.Count == 0) continue;
 
             var originalWhisperStart = phrase.First().Start;
-            var phraseEnd = phrase.Last().End;
-            var phraseStart = originalWhisperStart;
+            var originalWhisperEnd = phrase.Last().End;
+
+            var correctedStart = originalWhisperStart;
+            var correctedEnd = originalWhisperEnd;
 
             if (vadIntervals != null && vadIntervals.Count > 0)
             {
-                // Поиск перекрывающихся интервалов VAD с допуском 1.5 секунды
-                var tolerance = TimeSpan.FromSeconds(1.5);
-                var overlappingVads = vadIntervals.Where(v =>
-                    v.Start <= phraseEnd + tolerance &&
-                    v.End >= phraseStart - tolerance
-                ).ToList();
+                // Find VAD interval whose start is closest to originalWhisperStart (within 1.5 seconds)
+                var startVad = vadIntervals
+                    .Where(v => Math.Abs((v.Start - originalWhisperStart).TotalSeconds) <= 1.5)
+                    .OrderBy(v => Math.Abs((v.Start - originalWhisperStart).TotalSeconds))
+                    .FirstOrDefault();
 
-                if (overlappingVads.Count > 0)
+                if (startVad != null)
                 {
-                    var vadStart = overlappingVads.Min(v => v.Start);
-                    var vadEnd = overlappingVads.Max(v => v.End);
+                    correctedStart = startVad.Start;
+                }
 
-                    // Условие: silero vad видит голос И whisper поставил тайминг (выбираем максимум)
-                    var correctedStart = vadStart > originalWhisperStart ? vadStart : originalWhisperStart;
-                    var correctedEnd = vadEnd;
+                // Find VAD interval whose end is closest to originalWhisperEnd (within 1.5 seconds)
+                var endVad = vadIntervals
+                    .Where(v => Math.Abs((v.End - originalWhisperEnd).TotalSeconds) <= 1.5)
+                    .OrderBy(v => Math.Abs((v.End - originalWhisperEnd).TotalSeconds))
+                    .FirstOrDefault();
 
-                    if (correctedEnd <= correctedStart)
-                    {
-                        correctedEnd = correctedStart.Add(TimeSpan.FromMilliseconds(200));
-                    }
-
-                    var originalDuration = phraseEnd - phraseStart;
-                    var newDuration = correctedEnd - correctedStart;
-
-                    if (originalDuration.TotalMilliseconds > 0 && newDuration.TotalMilliseconds > 0)
-                    {
-                        double ratio = newDuration.TotalMilliseconds / originalDuration.TotalMilliseconds;
-                        foreach (var word in phrase)
-                        {
-                            var relStartMs = (word.Start - phraseStart).TotalMilliseconds * ratio;
-                            var relEndMs = (word.End - phraseStart).TotalMilliseconds * ratio;
-
-                            word.Start = correctedStart + TimeSpan.FromMilliseconds(relStartMs);
-                            word.End = correctedStart + TimeSpan.FromMilliseconds(relEndMs);
-                        }
-                    }
-                    else
-                    {
-                        foreach (var word in phrase)
-                        {
-                            word.Start = correctedStart;
-                            word.End = correctedEnd;
-                        }
-                    }
-
-                    phraseStart = correctedStart;
-                    phraseEnd = correctedEnd;
+                if (endVad != null)
+                {
+                    correctedEnd = endVad.End;
                 }
             }
 
-            var correctedWords = KaraokeGeometryValidator.ValidateAndCorrect(phrase, phraseStart, phraseEnd);
+            if (correctedEnd <= correctedStart)
+            {
+                correctedEnd = correctedStart.Add(TimeSpan.FromMilliseconds(200));
+            }
+
+            // Adjust first word start and last word end
+            phrase.First().Start = correctedStart;
+            phrase.Last().End = correctedEnd;
+
+            // Make sure word timings inside the phrase remain monotonically increasing and valid
+            var correctedWords = KaraokeGeometryValidator.ValidateAndCorrect(phrase, correctedStart, correctedEnd);
             if (correctedWords.Count > 0)
             {
                 correctedPhrases.Add(correctedWords);
