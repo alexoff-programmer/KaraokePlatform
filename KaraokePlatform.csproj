@@ -21,8 +21,4 @@
     <PackageReference Include="OwnAudioSharp" Version="3.1.7" />
   </ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\OwnVocalRemover\OwnVocalRemover\OwnVocalRemover.csproj" />
-  </ItemGroup>
-
 </Project>

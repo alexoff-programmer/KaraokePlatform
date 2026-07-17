@@ -33,7 +33,8 @@ public class AudioProcessor : IAudioProcessor
         {
             onProgress?.Invoke(5); // Подготовка
             
-            string modelName = "model_bs_roformer_ep_317_sdr_12.9755.ckpt";
+            // Используем загруженную пользователем ONNX модель bs_roformer
+            string modelName = "bs_roformer_ep317_sdr12.9755_quantized_uint8.onnx";
             string modelFileDir = Path.Combine(_environment.ContentRootPath, "Models", "audio_models");
             string modelArgs = "--mdxc_overlap 8";
 
@@ -98,7 +99,7 @@ public class AudioProcessor : IAudioProcessor
             if (File.Exists(instrumentalOutputPath)) File.Delete(instrumentalOutputPath);
             File.Move(instrumentalFile.FullName, instrumentalOutputPath);
 
-            // Пережимаем в Моно 16кГц для Whisper
+            // Пережимаем вокал в Моно 16кГц для Whisper
             DownsampleToWhisperFormat(vocalsFile.FullName, outputPath);
         }
         finally

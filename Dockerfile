@@ -18,7 +18,7 @@ RUN dotnet publish KaraokePlatform.csproj -c Release -o /app
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
-# Устанавливаем системные зависимости: ffmpeg, libgomp1, шрифты и Python3
+# Устанавливаем системные зависимости: ffmpeg, libgomp1, шрифты, Python3 и сборочные утилиты (для компиляции diffq)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libgomp1 \
@@ -29,6 +29,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-venv \
+    python3-dev \
+    build-essential \
     && fc-cache -fv \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
